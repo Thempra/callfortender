@@ -58,8 +58,6 @@ async def get_user(user_id: int, call_service: CallProcessingService = Depends(g
     """
     try:
         return await call_service.get_user(user_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -78,8 +76,6 @@ async def update_user(user_id: int, user_update: UserUpdate, call_service: CallP
     """
     try:
         return await call_service.update_user(user_id, user_update)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -97,8 +93,6 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
     """
     try:
         return await call_service.delete_user(user_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -107,7 +101,7 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
 
 from typing import List
 from ..repositories.user_repository import UserRepository
-from ..models.user_model import UserCreate, UserUpdate, UserInDBBase
+from ..models.user_model import UserCreate, UserUpdate, User
 
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
@@ -119,7 +113,7 @@ class CallProcessingService:
         """
         self.user_repo = user_repo
 
-    async def create_user(self, user: UserCreate) -> UserInDBBase:
+    async def create_user(self, user: UserCreate) -> User:
         """
         Create a new user.
 
@@ -127,11 +121,11 @@ class CallProcessingService:
             user (UserCreate): The user data to be created.
 
         Returns:
-            UserInDBBase: The created user data.
+            User: The created user data.
         """
         return await self.user_repo.create(user)
 
-    async def get_users(self, skip: int = 0, limit: int = 10) -> List[UserInDBBase]:
+    async def get_users(self, skip: int = 0, limit: int = 10) -> List[User]:
         """
         Retrieve a list of users.
 
@@ -140,11 +134,11 @@ class CallProcessingService:
             limit (int): Maximum number of records to return.
 
         Returns:
-            List[UserInDBBase]: A list of user data.
+            List[User]: A list of user data.
         """
         return await self.user_repo.get_all(skip, limit)
 
-    async def get_user(self, user_id: int) -> UserInDBBase:
+    async def get_user(self, user_id: int) -> User:
         """
         Retrieve a user by ID.
 
@@ -152,14 +146,11 @@ class CallProcessingService:
             user_id (int): The ID of the user to retrieve.
 
         Returns:
-            UserInDBBase: The retrieved user data.
+            User: The retrieved user data.
         """
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise ValueError(f"User with id {user_id} not found")
-        return user
+        return await self.user_repo.get_by_id(user_id)
 
-    async def update_user(self, user_id: int, user_update: UserUpdate) -> UserInDBBase:
+    async def update_user(self, user_id: int, user_update: UserUpdate) -> User:
         """
         Update a user by ID.
 
@@ -168,11 +159,11 @@ class CallProcessingService:
             user_update (UserUpdate): The data to update the user with.
 
         Returns:
-            UserInDBBase: The updated user data.
+            User: The updated user data.
         """
         return await self.user_repo.update(user_id, user_update)
 
-    async def delete_user(self, user_id: int) -> UserInDBBase:
+    async def delete_user(self, user_id: int) -> User:
         """
         Delete a user by ID.
 
@@ -180,20 +171,28 @@ class CallProcessingService:
             user_id (int): The ID of the user to delete.
 
         Returns:
-            UserInDBBase: The deleted user data.
+            User: The deleted user data.
         """
         return await self.user_repo.delete(user_id)
 
 
 # app/repositories/user_repository.py
 
-from sqlalchemy.future import select
-from typing import List, Optional
-from ..models.user_model import UserCreate, UserUpdate, UserInDBBase
-from .base_repository import BaseRepository
+from sqlalchemy.ext.asyncio import AsyncSession
+from ..models.user_model import UserInDB, UserCreate, UserUpdate, User
+from ..database import Base
 
 class UserRepository(BaseRepository):
-    async def create(self, user: UserCreate) -> UserInDBBase:
+    def __init__(self, session: AsyncSession):
+        """
+        Initialize the UserRepository with an AsyncSession.
+
+        Args:
+            session (AsyncSession): The database session.
+        """
+        super().__init__(session)
+
+    async def create(self, user: UserCreate) -> User:
         """
         Create a new user.
 
@@ -201,7 +200,7 @@ class UserRepository(BaseRepository):
             user (UserCreate): The user data to be created.
 
         Returns:
-            UserInDBBase: The created user data.
+            User: The created user data.
         """
         db_user = UserInDB(**user.dict(), hashed_password=self._hash_password(user.password))
         self.session.add(db_user)
@@ -209,7 +208,7 @@ class UserRepository(BaseRepository):
         await self.session.refresh(db_user)
         return db_user
 
-    async def get_all(self, skip: int = 0, limit: int = 10) -> List[UserInDBBase]:
+    async def get_all(self, skip: int = 0, limit: int = 10) -> List[User]:
         """
         Retrieve a list of users.
 
@@ -218,12 +217,12 @@ class UserRepository(BaseRepository):
             limit (int): Maximum number of records to return.
 
         Returns:
-            List[UserInDBBase]: A list of user data.
+            List[User]: A list of user data.
         """
         result = await self.session.execute(select(UserInDB).offset(skip).limit(limit))
         return result.scalars().all()
 
-    async def get_by_id(self, user_id: int) -> Optional[UserInDBBase]:
+    async def get_by_id(self, user_id: int) -> User:
         """
         Retrieve a user by ID.
 
@@ -231,12 +230,15 @@ class UserRepository(BaseRepository):
             user_id (int): The ID of the user to retrieve.
 
         Returns:
-            Optional[UserInDBBase]: The retrieved user data or None if not found.
+            User: The retrieved user data.
         """
         result = await self.session.execute(select(UserInDB).where(UserInDB.id == user_id))
-        return result.scalar_one_or_none()
+        db_user = result.scalar_one_or_none()
+        if not db_user:
+            raise ValueError(f"User with id {user_id} not found")
+        return db_user
 
-    async def update(self, user_id: int, user_update: UserUpdate) -> UserInDBBase:
+    async def update(self, user_id: int, user_update: UserUpdate) -> User:
         """
         Update a user by ID.
 
@@ -245,11 +247,9 @@ class UserRepository(BaseRepository):
             user_update (UserUpdate): The data to update the user with.
 
         Returns:
-            UserInDBBase: The updated user data.
+            User: The updated user data.
         """
         db_user = await self.get_by_id(user_id)
-        if not db_user:
-            raise ValueError(f"User with id {user_id} not found")
         for key, value in user_update.dict(exclude_unset=True).items():
             setattr(db_user, key, value)
         self.session.add(db_user)
@@ -257,7 +257,7 @@ class UserRepository(BaseRepository):
         await self.session.refresh(db_user)
         return db_user
 
-    async def delete(self, user_id: int) -> UserInDBBase:
+    async def delete(self, user_id: int) -> User:
         """
         Delete a user by ID.
 
@@ -265,11 +265,9 @@ class UserRepository(BaseRepository):
             user_id (int): The ID of the user to delete.
 
         Returns:
-            UserInDBBase: The deleted user data.
+            User: The deleted user data.
         """
         db_user = await self.get_by_id(user_id)
-        if not db_user:
-            raise ValueError(f"User with id {user_id} not found")
         await self.session.delete(db_user)
         await self.session.commit()
         return db_user
@@ -378,7 +376,7 @@ def get_call_processing_service(user_repo: UserRepository = Depends(get_user_rep
     Dependency to get the call processing service.
 
     Args:
-        user_repo (UserRepository): The user repository.
+        user_repo (UserRepository): The repository for user operations.
 
     Returns:
         CallProcessingService: The call processing service.
