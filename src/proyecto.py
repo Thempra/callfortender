@@ -150,7 +150,7 @@ class CallProcessingService:
         """
         user = await self.user_repo.get_by_id(user_id)
         if not user:
-            raise ValueError("User not found")
+            raise ValueError(f"User with id {user_id} not found")
         return user
 
     async def update_user(self, user_id: int, user_update: UserUpdate) -> UserInDB:
@@ -164,6 +164,9 @@ class CallProcessingService:
         Returns:
             UserInDB: The updated user data.
         """
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError(f"User with id {user_id} not found")
         return await self.user_repo.update(user_id, user_update)
 
     async def delete_user(self, user_id: int) -> UserInDB:
@@ -176,6 +179,9 @@ class CallProcessingService:
         Returns:
             UserInDB: The deleted user data.
         """
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError(f"User with id {user_id} not found")
         return await self.user_repo.delete(user_id)
 
 
@@ -183,7 +189,8 @@ class CallProcessingService:
 
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserCreate, UserUpdate, UserInDB
+from ..models.user_model import UserInDB, UserCreate, UserUpdate
+from sqlalchemy.future import select
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
@@ -205,7 +212,14 @@ class UserRepository:
         Returns:
             UserInDB: The created user data.
         """
-        db_user = UserInDB(**user.dict(), hashed_password=self._hash_password(user.password))
+        db_user = UserInDB(
+            username=user.username,
+            email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            date_of_birth=user.date_of_birth,
+            hashed_password=self._hash_password(user.password)
+        )
         self.session.add(db_user)
         await self.session.commit()
         await self.session.refresh(db_user)
@@ -255,7 +269,7 @@ class UserRepository:
         """
         db_user = await self.get_by_id(user_id)
         if not db_user:
-            raise ValueError("User not found")
+            raise ValueError(f"User with id {user_id} not found")
         for key, value in user_update.dict(exclude_unset=True).items():
             setattr(db_user, key, value)
         self.session.add(db_user)
@@ -275,7 +289,7 @@ class UserRepository:
         """
         db_user = await self.get_by_id(user_id)
         if not db_user:
-            raise ValueError("User not found")
+            raise ValueError(f"User with id {user_id} not found")
         await self.session.delete(db_user)
         await self.session.commit()
         return db_user
@@ -359,10 +373,11 @@ class UserInDB(UserInDBBase, Base):
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..repositories.user_repository import UserRepository
-from .database import get_session
+from ..database import get_db_session
+from .repositories.user_repository import UserRepository
+from .services.call_processing_service import CallProcessingService
 
-async def get_user_repo(session: AsyncSession = Depends(get_session)) -> UserRepository:
+def get_user_repo(session: AsyncSession = Depends(get_db_session)) -> UserRepository:
     """
     Dependency to get a UserRepository instance.
 
@@ -374,7 +389,7 @@ async def get_user_repo(session: AsyncSession = Depends(get_session)) -> UserRep
     """
     return UserRepository(session)
 
-async def get_call_service(user_repo: UserRepository = Depends(get_user_repo)) -> CallProcessingService:
+def get_call_processing_service(user_repo: UserRepository = Depends(get_user_repo)) -> CallProcessingService:
     """
     Dependency to get a CallProcessingService instance.
 
@@ -391,7 +406,7 @@ async def get_call_service(user_repo: UserRepository = Depends(get_user_repo)) -
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from .config import settings
+from ..config import settings
 
 DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
@@ -402,12 +417,12 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False
 )
 
-async def get_session() -> AsyncSession:
+async def get_db_session() -> AsyncSession:
     """
     Dependency to get a database session.
 
     Yields:
-        AsyncSession: A new database session.
+        AsyncSession: A database session.
     """
     async with AsyncSessionLocal() as session:
         yield session
