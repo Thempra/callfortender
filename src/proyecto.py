@@ -27,7 +27,7 @@ async def create_user(user: UserCreate, call_service: CallProcessingService = De
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/users/", response_model=List[User])
-async def read_users(skip: int = 0, limit: int = 10, call_service: CallProcessingService = Depends(get_call_processing_service)):
+async def get_users(skip: int = 0, limit: int = 10, call_service: CallProcessingService = Depends(get_call_processing_service)):
     """
     Retrieve a list of users.
 
@@ -45,7 +45,7 @@ async def read_users(skip: int = 0, limit: int = 10, call_service: CallProcessin
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/users/{user_id}", response_model=User)
-async def read_user(user_id: int, call_service: CallProcessingService = Depends(get_call_processing_service)):
+async def get_user(user_id: int, call_service: CallProcessingService = Depends(get_call_processing_service)):
     """
     Retrieve a user by ID.
 
@@ -57,7 +57,7 @@ async def read_user(user_id: int, call_service: CallProcessingService = Depends(
         User: The retrieved user data.
     """
     try:
-        return await call_service.get_user_by_id(user_id)
+        return await call_service.get_user(user_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -132,7 +132,7 @@ class CallProcessingService:
         """
         return await self._user_repo.get_all(skip, limit)
 
-    async def get_user_by_id(self, user_id: int) -> UserInDB:
+    async def get_user(self, user_id: int) -> UserInDB:
         """
         Retrieve a user by ID.
 
@@ -172,10 +172,9 @@ class CallProcessingService:
 
 # app/repositories/user_repository.py
 
+from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from ..models.user_model import UserInDB, UserCreate, UserUpdate
-from ..utils.security import hash_password
+from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
@@ -191,20 +190,13 @@ class UserRepository:
         Returns:
             UserInDB: The created user data.
         """
-        db_user = UserInDB(
-            username=user.username,
-            email=user.email,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            date_of_birth=user.date_of_birth,
-            hashed_password=hash_password(user.password)
-        )
+        db_user = UserInDB(**user.dict())
         self._session.add(db_user)
         await self._session.commit()
         await self._session.refresh(db_user)
         return db_user
 
-    async def get_all(self, skip: int = 0, limit: int = 10) -> list[UserInDB]:
+    async def get_all(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
         """
         Retrieve a list of users.
 
@@ -353,7 +345,7 @@ async def get_user_repo(session: AsyncSession = Depends(get_session)) -> UserRep
     """
     return UserRepository(session)
 
-async def get_call_processing_service(user_repo: UserRepository = Depends(get_user_repo)) -> CallProcessingService:
+async def get_call_service(user_repo: UserRepository = Depends(get_user_repo)) -> CallProcessingService:
     """
     Dependency to get a CallProcessingService instance.
 
@@ -370,12 +362,11 @@ async def get_call_processing_service(user_repo: UserRepository = Depends(get_us
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from ..config import settings
+from .config import settings
 
 DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
-
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -387,7 +378,7 @@ async def get_session() -> AsyncSession:
     Dependency to get a database session.
 
     Yields:
-        AsyncSession: A new database session.
+        AsyncSession: A database session.
     """
     async with AsyncSessionLocal() as session:
         yield session
@@ -405,35 +396,3 @@ class Settings(BaseSettings):
     database_username: str = Field(..., env="DATABASE_USERNAME")
 
 settings = Settings()
-
-
-# app/utils/security.py
-
-from passlib.context import CryptContext
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def hash_password(password: str) -> str:
-    """
-    Hash a password.
-
-    Args:
-        password (str): The password to hash.
-
-    Returns:
-        str: The hashed password.
-    """
-    return pwd_context.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify a plain password against a hashed password.
-
-    Args:
-        plain_password (str): The plain password to verify.
-        hashed_password (str): The hashed password to compare against.
-
-    Returns:
-        bool: True if the passwords match, False otherwise.
-    """
-    return pwd_context.verify(plain_password, hashed_password)
