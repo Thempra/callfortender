@@ -108,7 +108,7 @@ from ..repositories.user_repository import UserRepository
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
         """
-        Initialize the CallProcessingService.
+        Initialize the CallProcessingService with a UserRepository.
 
         Args:
             user_repo (UserRepository): The repository for user operations.
@@ -136,7 +136,7 @@ class CallProcessingService:
             limit (int): Maximum number of records to return.
 
         Returns:
-            list[UserInDB]: A list of user data.
+            List[UserInDB]: A list of user data.
         """
         return await self.user_repo.get_all(skip, limit)
 
@@ -188,7 +188,7 @@ from sqlalchemy.future import select
 class UserRepository:
     def __init__(self, session: AsyncSession):
         """
-        Initialize the UserRepository.
+        Initialize the UserRepository with a database session.
 
         Args:
             session (AsyncSession): The database session.
@@ -222,9 +222,7 @@ class UserRepository:
         Returns:
             List[UserInDB]: A list of user data.
         """
-        result = await self.session.execute(
-            select(UserInDB).offset(skip).limit(limit)
-        )
+        result = await self.session.execute(select(UserInDB).offset(skip).limit(limit))
         return result.scalars().all()
 
     async def get_by_id(self, user_id: int) -> Optional[UserInDB]:
@@ -237,9 +235,7 @@ class UserRepository:
         Returns:
             Optional[UserInDB]: The retrieved user data or None if not found.
         """
-        result = await self.session.execute(
-            select(UserInDB).where(UserInDB.id == user_id)
-        )
+        result = await self.session.execute(select(UserInDB).where(UserInDB.id == user_id))
         return result.scalar_one_or_none()
 
     async def update(self, user_id: int, user_update: UserUpdate) -> UserInDB:
@@ -381,7 +377,7 @@ def get_call_processing_service(user_repo: UserRepository = Depends(get_user_rep
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from .config import settings
+from ..config import settings
 
 DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
@@ -413,9 +409,6 @@ class Settings(BaseSettings):
     database_password: str
     database_name: str
     database_username: str
-    secret_key: str
-    algorithm: str
-    access_token_expire_minutes: int
 
     class Config:
         env_file = ".env"
