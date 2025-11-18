@@ -108,3 +108,55 @@ def test_user_in_db_missing_hashed_password():
     }
     with pytest.raises(ValidationError):
         UserInDB(**user_data)
+
+def test_user_base_no_email():
+    user_data = {
+        "username": "testuser",
+        "first_name": "John",
+        "last_name": "Doe",
+        "date_of_birth": date(1990, 1, 1)
+    }
+    with pytest.raises(ValidationError):
+        UserBase(**user_data)
+
+def test_user_base_invalid_email():
+    user_data = {
+        "username": "testuser",
+        "email": "invalid-email",
+        "first_name": "John",
+        "last_name": "Doe",
+        "date_of_birth": date(1990, 1, 1)
+    }
+    with pytest.raises(ValidationError):
+        UserBase(**user_data)
+
+def test_user_base_min_length_username():
+    user = UserBase(username="us", email="test@example.com")
+    assert user.username == "us"
+
+def test_user_base_max_length_username():
+    user = UserBase(username="a" * 50, email="test@example.com")
+    assert user.username == "a" * 50
+
+def test_user_base_invalid_username_length():
+    with pytest.raises(ValidationError):
+        UserBase(username="a" * 51, email="test@example.com")
+    
+    with pytest.raises(ValidationError):
+        UserBase(username="", email="test@example.com")
+
+def test_user_update_no_data():
+    user = UserUpdate()
+    assert user.first_name is None
+    assert user.last_name is None
+    assert user.date_of_birth is None
+
+def test_user_update_partial_data():
+    user_data = {
+        "first_name": "John",
+        "last_name": "Doe"
+    }
+    user = UserUpdate(**user_data)
+    assert user.first_name == "John"
+    assert user.last_name == "Doe"
+    assert user.date_of_birth is None
