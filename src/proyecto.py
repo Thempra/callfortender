@@ -57,9 +57,12 @@ async def get_user(user_id: int, call_service: CallProcessingService = Depends(g
         User: The retrieved user data.
     """
     try:
-        return await call_service.get_user(user_id)
+        user = await call_service.get_user(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
     except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/users/{user_id}", response_model=User)
 async def update_user(user_id: int, user_update: UserUpdate, call_service: CallProcessingService = Depends(get_call_processing_service)):
@@ -75,9 +78,12 @@ async def update_user(user_id: int, user_update: UserUpdate, call_service: CallP
         User: The updated user data.
     """
     try:
-        return await call_service.update_user(user_id, user_update)
+        user = await call_service.update_user(user_id, user_update)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
     except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/users/{user_id}", response_model=User)
 async def delete_user(user_id: int, call_service: CallProcessingService = Depends(get_call_processing_service)):
@@ -92,9 +98,12 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
         User: The deleted user data.
     """
     try:
-        return await call_service.delete_user(user_id)
+        user = await call_service.delete_user(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
     except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # app/services/call_processing_service.py
@@ -106,7 +115,7 @@ from ..models.user_model import UserCreate, UserUpdate, UserInDB
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
         """
-        Initialize the CallProcessingService with a UserRepository.
+        Initialize the CallProcessingService.
 
         Args:
             user_repo (UserRepository): The repository for user operations.
@@ -148,10 +157,7 @@ class CallProcessingService:
         Returns:
             UserInDB: The retrieved user data.
         """
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise ValueError(f"User with id {user_id} not found")
-        return user
+        return await self.user_repo.get_by_id(user_id)
 
     async def update_user(self, user_id: int, user_update: UserUpdate) -> UserInDB:
         """
@@ -164,9 +170,6 @@ class CallProcessingService:
         Returns:
             UserInDB: The updated user data.
         """
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise ValueError(f"User with id {user_id} not found")
         return await self.user_repo.update(user_id, user_update)
 
     async def delete_user(self, user_id: int) -> UserInDB:
@@ -179,9 +182,6 @@ class CallProcessingService:
         Returns:
             UserInDB: The deleted user data.
         """
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise ValueError(f"User with id {user_id} not found")
         return await self.user_repo.delete(user_id)
 
 
@@ -189,13 +189,12 @@ class CallProcessingService:
 
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserInDB, UserCreate, UserUpdate
-from sqlalchemy.future import select
+from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
         """
-        Initialize the UserRepository with a database session.
+        Initialize the UserRepository.
 
         Args:
             session (AsyncSession): The database session.
@@ -341,63 +340,44 @@ class UserUpdate(UserBase):
     """
 
 class UserInDBBase(UserBase):
-    """
-    Base model for user information stored in the database.
-    """
     id: int
 
     class Config:
         orm_mode = True
 
-class User(UserInDBBase):
-    """
-    Model for user information returned to the client.
-    """
-
-class UserInDB(UserInDBBase, Base):
-    """
-    Model for user information stored in the database, including hashed password.
-    """
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    email = Column(String, unique=True, index=True)
-    first_name = Column(String)
-    last_name = Column(String)
-    date_of_birth = Column(Date)
-    hashed_password = Column(String)
+class UserInDB(UserInDBBase):
+    hashed_password: str
 
 
 # app/dependencies.py
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..database import get_db_session
+from ..database import get_db
 from .repositories.user_repository import UserRepository
 from .services.call_processing_service import CallProcessingService
 
-def get_user_repo(session: AsyncSession = Depends(get_db_session)) -> UserRepository:
+def get_user_repo(session: AsyncSession = Depends(get_db)) -> UserRepository:
     """
-    Dependency to get a UserRepository instance.
+    Dependency to get the user repository.
 
     Args:
         session (AsyncSession): The database session.
 
     Returns:
-        UserRepository: An instance of UserRepository.
+        UserRepository: The user repository.
     """
     return UserRepository(session)
 
 def get_call_processing_service(user_repo: UserRepository = Depends(get_user_repo)) -> CallProcessingService:
     """
-    Dependency to get a CallProcessingService instance.
+    Dependency to get the call processing service.
 
     Args:
-        user_repo (UserRepository): The repository for user operations.
+        user_repo (UserRepository): The user repository.
 
     Returns:
-        CallProcessingService: An instance of CallProcessingService.
+        CallProcessingService: The call processing service.
     """
     return CallProcessingService(user_repo)
 
@@ -406,7 +386,7 @@ def get_call_processing_service(user_repo: UserRepository = Depends(get_user_rep
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from ..config import settings
+from .config import settings
 
 DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
@@ -417,12 +397,12 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False
 )
 
-async def get_db_session() -> AsyncSession:
+async def get_db():
     """
-    Dependency to get a database session.
+    Dependency to get the database session.
 
     Yields:
-        AsyncSession: A database session.
+        AsyncSession: The database session.
     """
     async with AsyncSessionLocal() as session:
         yield session
