@@ -181,7 +181,6 @@ class CallProcessingService:
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.user_model import UserCreate, UserUpdate, UserInDB
-from sqlalchemy.future import select
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
@@ -375,7 +374,7 @@ async def get_user_repo(session: AsyncSession = Depends(get_session)) -> UserRep
         session (AsyncSession): The database session.
 
     Returns:
-        UserRepository: A repository for user operations.
+        UserRepository: An instance of UserRepository.
     """
     return UserRepository(session)
 
@@ -387,7 +386,7 @@ async def get_call_processing_service(user_repo: UserRepository = Depends(get_us
         user_repo (UserRepository): The repository for user operations.
 
     Returns:
-        CallProcessingService: A service for call processing.
+        CallProcessingService: An instance of CallProcessingService.
     """
     return CallProcessingService(user_repo)
 
@@ -401,7 +400,6 @@ from .config import settings
 DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
-
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
