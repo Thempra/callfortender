@@ -57,12 +57,9 @@ async def get_user(user_id: int, call_service: CallProcessingService = Depends(g
         User: The retrieved user data.
     """
     try:
-        user = await call_service.get_user(user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        return user
+        return await call_service.get_user(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.put("/users/{user_id}", response_model=User)
 async def update_user(user_id: int, user_update: UserUpdate, call_service: CallProcessingService = Depends(get_call_processing_service)):
@@ -80,7 +77,7 @@ async def update_user(user_id: int, user_update: UserUpdate, call_service: CallP
     try:
         return await call_service.update_user(user_id, user_update)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.delete("/users/{user_id}", response_model=User)
 async def delete_user(user_id: int, call_service: CallProcessingService = Depends(get_call_processing_service)):
@@ -97,36 +94,30 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
     try:
         return await call_service.delete_user(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # app/services/call_processing_service.py
 
 from typing import List
-from ..repositories.user_repository import UserRepository
 from ..models.user_model import UserCreate, UserUpdate, UserInDB
+from ..repositories.user_repository import UserRepository
 
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
-        """
-        Initialize the CallProcessingService with a UserRepository.
-
-        Args:
-            user_repo (UserRepository): The repository for user operations.
-        """
-        self.user_repo = user_repo
+        self._user_repo = user_repo
 
     async def create_user(self, user: UserCreate) -> UserInDB:
         """
         Create a new user.
 
         Args:
-            user (UserCreate): The data to create the user with.
+            user (UserCreate): The user data to be created.
 
         Returns:
             UserInDB: The created user data.
         """
-        return await self.user_repo.create(user)
+        return await self._user_repo.create(user)
 
     async def get_users(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
         """
@@ -139,7 +130,7 @@ class CallProcessingService:
         Returns:
             List[UserInDB]: A list of user data.
         """
-        return await self.user_repo.get_all(skip, limit)
+        return await self._user_repo.get_all(skip, limit)
 
     async def get_user(self, user_id: int) -> UserInDB:
         """
@@ -151,7 +142,10 @@ class CallProcessingService:
         Returns:
             UserInDB: The retrieved user data.
         """
-        return await self.user_repo.get_by_id(user_id)
+        user = await self._user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError(f"User with id {user_id} not found")
+        return user
 
     async def update_user(self, user_id: int, user_update: UserUpdate) -> UserInDB:
         """
@@ -164,7 +158,7 @@ class CallProcessingService:
         Returns:
             UserInDB: The updated user data.
         """
-        return await self.user_repo.update(user_id, user_update)
+        return await self._user_repo.update(user_id, user_update)
 
     async def delete_user(self, user_id: int) -> UserInDB:
         """
@@ -176,35 +170,28 @@ class CallProcessingService:
         Returns:
             UserInDB: The deleted user data.
         """
-        return await self.user_repo.delete(user_id)
+        return await self._user_repo.delete(user_id)
 
 
 # app/repositories/user_repository.py
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserCreate, UserUpdate, UserInDBBase, UserInDB
+from typing import List
+from sqlalchemy.future import select
+from ..models.user_model import UserCreate, UserUpdate, UserInDB
+from .base_repository import BaseRepository
 
-class UserRepository:
-    def __init__(self, session: AsyncSession):
-        """
-        Initialize the UserRepository with a database session.
-
-        Args:
-            session (AsyncSession): The database session.
-        """
-        self.session = session
-
+class UserRepository(BaseRepository):
     async def create(self, user: UserCreate) -> UserInDB:
         """
         Create a new user.
 
         Args:
-            user (UserCreate): The data to create the user with.
+            user (UserCreate): The user data to be created.
 
         Returns:
             UserInDB: The created user data.
         """
-        db_user = UserInDBBase(**user.dict())
+        db_user = UserInDB(**user.dict())
         db_user.hashed_password = self._hash_password(user.password)
         self.session.add(db_user)
         await self.session.commit()
@@ -295,6 +282,15 @@ class UserRepository:
         return password
 
 
+# app/repositories/base_repository.py
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+class BaseRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+
 # app/models/user_model.py
 
 from typing import Optional
@@ -383,7 +379,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from .config import settings
 
-DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
+DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_host}/{settings.database_name}"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 AsyncSessionLocal = sessionmaker(
@@ -394,7 +390,7 @@ AsyncSessionLocal = sessionmaker(
 
 async def get_db():
     """
-    Dependency to get a database session.
+    Dependency to get the database session.
 
     Yields:
         AsyncSession: The database session.
@@ -408,11 +404,10 @@ async def get_db():
 from pydantic import BaseSettings
 
 class Settings(BaseSettings):
-    database_hostname: str
-    database_port: str
-    database_password: str
-    database_name: str
     database_username: str
+    database_password: str
+    database_host: str
+    database_name: str
 
     class Config:
         env_file = ".env"
