@@ -50,14 +50,17 @@ async def read_user(user_id: int, call_service: CallProcessingService = Depends(
     Retrieve a user by ID.
 
     Args:
-        user_id (int): The ID of the user to be retrieved.
+        user_id (int): The ID of the user to retrieve.
         call_service (CallProcessingService): Dependency injected service for call processing.
 
     Returns:
-        User: The user data.
+        User: The retrieved user data.
     """
     try:
-        return await call_service.get_user_by_id(user_id)
+        user = await call_service.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -67,7 +70,7 @@ async def update_user(user_id: int, user_update: UserUpdate, call_service: CallP
     Update an existing user.
 
     Args:
-        user_id (int): The ID of the user to be updated.
+        user_id (int): The ID of the user to update.
         user_update (UserUpdate): The data to update the user with.
         call_service (CallProcessingService): Dependency injected service for call processing.
 
@@ -85,7 +88,7 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
     Delete a user by ID.
 
     Args:
-        user_id (int): The ID of the user to be deleted.
+        user_id (int): The ID of the user to delete.
         call_service (CallProcessingService): Dependency injected service for call processing.
 
     Returns:
@@ -99,34 +102,26 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
 
 # app/services/call_processing_service.py
 
-from typing import List
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 from ..repositories.user_repository import UserRepository
-from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
-        """
-        Initialize the call processing service.
+        self._user_repo = user_repo
 
-        Args:
-            user_repo (UserRepository): The user repository.
-        """
-        self.user_repo = user_repo
-
-    async def create_user(self, user: UserCreate) -> UserInDB:
+    async def create_user(self, user_create: UserCreate) -> UserInDB:
         """
         Create a new user.
 
         Args:
-            user (UserCreate): The user data to be created.
+            user_create (UserCreate): The data for the new user.
 
         Returns:
-            UserInDB: The created user data.
+            UserInDB: The created user.
         """
-        return await self.user_repo.create(user)
+        return await self._user_repo.create(user_create)
 
-    async def get_users(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
+    async def get_users(self, skip: int = 0, limit: int = 10) -> list[UserInDB]:
         """
         Retrieve a list of users.
 
@@ -137,75 +132,78 @@ class CallProcessingService:
         Returns:
             List[UserInDB]: A list of user data.
         """
-        return await self.user_repo.get_all(skip, limit)
+        return await self._user_repo.get_all(skip, limit)
 
-    async def get_user_by_id(self, user_id: int) -> UserInDB:
+    async def get_user_by_id(self, user_id: int) -> Optional[UserInDB]:
         """
         Retrieve a user by ID.
 
         Args:
-            user_id (int): The ID of the user to be retrieved.
+            user_id (int): The ID of the user to retrieve.
 
         Returns:
-            UserInDB: The user data.
+            Optional[UserInDB]: The retrieved user data or None if not found.
         """
-        return await self.user_repo.get_by_id(user_id)
+        return await self._user_repo.get_by_id(user_id)
 
     async def update_user(self, user_id: int, user_update: UserUpdate) -> UserInDB:
         """
         Update an existing user.
 
         Args:
-            user_id (int): The ID of the user to be updated.
+            user_id (int): The ID of the user to update.
             user_update (UserUpdate): The data to update the user with.
 
         Returns:
             UserInDB: The updated user data.
         """
-        return await self.user_repo.update(user_id, user_update)
+        return await self._user_repo.update(user_id, user_update)
 
     async def delete_user(self, user_id: int) -> UserInDB:
         """
         Delete a user by ID.
 
         Args:
-            user_id (int): The ID of the user to be deleted.
+            user_id (int): The ID of the user to delete.
 
         Returns:
             UserInDB: The deleted user data.
         """
-        return await self.user_repo.delete(user_id)
+        return await self._user_repo.delete(user_id)
 
 
 # app/repositories/user_repository.py
 
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserCreate, UserUpdate, UserInDBBase, UserInDB
+from sqlalchemy.future import select
+from ..models.user_model import UserInDB, UserCreate, UserUpdate
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
-        """
-        Initialize the user repository.
+        self._session = session
 
-        Args:
-            session (AsyncSession): The database session.
-        """
-        self.session = session
-
-    async def create(self, user: UserCreate) -> UserInDB:
+    async def create(self, user_create: UserCreate) -> UserInDB:
         """
         Create a new user.
 
         Args:
-            user (UserCreate): The user data to be created.
+            user_create (UserCreate): The data for the new user.
 
         Returns:
-            UserInDB: The created user data.
+            UserInDB: The created user.
         """
-        db_user = UserInDB(**user.dict(), hashed_password=self._hash_password(user.password))
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
+        db_user = UserInDB(
+            username=user_create.username,
+            email=user_create.email,
+            first_name=user_create.first_name,
+            last_name=user_create.last_name,
+            date_of_birth=user_create.date_of_birth,
+            hashed_password=self._hash_password(user_create.password)
+        )
+        self._session.add(db_user)
+        await self._session.commit()
+        await self._session.refresh(db_user)
         return db_user
 
     async def get_all(self, skip: int = 0, limit: int = 10) -> list[UserInDB]:
@@ -219,22 +217,22 @@ class UserRepository:
         Returns:
             List[UserInDB]: A list of user data.
         """
-        result = await self.session.execute(
+        result = await self._session.execute(
             select(UserInDB).offset(skip).limit(limit)
         )
         return result.scalars().all()
 
-    async def get_by_id(self, user_id: int) -> UserInDB:
+    async def get_by_id(self, user_id: int) -> Optional[UserInDB]:
         """
         Retrieve a user by ID.
 
         Args:
-            user_id (int): The ID of the user to be retrieved.
+            user_id (int): The ID of the user to retrieve.
 
         Returns:
-            UserInDB: The user data.
+            Optional[UserInDB]: The retrieved user data or None if not found.
         """
-        result = await self.session.execute(
+        result = await self._session.execute(
             select(UserInDB).where(UserInDB.id == user_id)
         )
         return result.scalar_one_or_none()
@@ -244,7 +242,7 @@ class UserRepository:
         Update an existing user.
 
         Args:
-            user_id (int): The ID of the user to be updated.
+            user_id (int): The ID of the user to update.
             user_update (UserUpdate): The data to update the user with.
 
         Returns:
@@ -255,9 +253,9 @@ class UserRepository:
             raise ValueError("User not found")
         for key, value in user_update.dict(exclude_unset=True).items():
             setattr(db_user, key, value)
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
+        self._session.add(db_user)
+        await self._session.commit()
+        await self._session.refresh(db_user)
         return db_user
 
     async def delete(self, user_id: int) -> UserInDB:
@@ -265,7 +263,7 @@ class UserRepository:
         Delete a user by ID.
 
         Args:
-            user_id (int): The ID of the user to be deleted.
+            user_id (int): The ID of the user to delete.
 
         Returns:
             UserInDB: The deleted user data.
@@ -273,8 +271,8 @@ class UserRepository:
         db_user = await self.get_by_id(user_id)
         if not db_user:
             raise ValueError("User not found")
-        await self.session.delete(db_user)
-        await self.session.commit()
+        await self._session.delete(db_user)
+        await self._session.commit()
         return db_user
 
     @staticmethod
@@ -362,7 +360,7 @@ from .services.call_processing_service import CallProcessingService
 
 def get_user_repo(session: AsyncSession = Depends(get_session)) -> UserRepository:
     """
-    Dependency to get the user repository.
+    Dependency to inject the user repository.
 
     Args:
         session (AsyncSession): The database session.
@@ -374,7 +372,7 @@ def get_user_repo(session: AsyncSession = Depends(get_session)) -> UserRepositor
 
 def get_call_processing_service(user_repo: UserRepository = Depends(get_user_repo)) -> CallProcessingService:
     """
-    Dependency to get the call processing service.
+    Dependency to inject the call processing service.
 
     Args:
         user_repo (UserRepository): The user repository.
@@ -394,6 +392,7 @@ from .config import settings
 DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
+
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -402,7 +401,7 @@ AsyncSessionLocal = sessionmaker(
 
 async def get_session() -> AsyncSession:
     """
-    Dependency to get the database session.
+    Dependency to inject the database session.
 
     Yields:
         AsyncSession: The database session.
