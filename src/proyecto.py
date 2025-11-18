@@ -162,13 +162,198 @@ class CallProcessingService:
 
 # app/repositories/user_repository.py
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from ..models.user_model import UserInDB
+from .base_repository import BaseRepository
+
+class UserRepository(BaseRepository):
+    def __init__(self, session: AsyncSession):
+        """
+        Initialize the UserRepository with a database session.
+
+        Args:
+            session (AsyncSession): The database session.
+        """
+        super().__init__(session)
+
+    async def create(self, user: UserInDB) -> UserInDB:
+        """
+        Create a new user in the database.
+
+        Args:
+            user (UserInDB): The user data to be created.
+
+        Returns:
+            UserInDB: The created user data.
+        """
+        self.session.add(user)
+        await self.session.commit()
+        await self.session.refresh(user)
+        return user
+
+    async def get_all(self, skip: int, limit: int) -> List[UserInDB]:
+        """
+        Retrieve a list of users from the database.
+
+        Args:
+            skip (int): Number of records to skip.
+            limit (int): Maximum number of records to return.
+
+        Returns:
+            List[UserInDB]: A list of user data.
+        """
+        query = select(UserInDB).offset(skip).limit(limit)
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def get_by_id(self, user_id: int) -> UserInDB:
+        """
+        Retrieve a user by ID from the database.
+
+        Args:
+            user_id (int): The ID of the user to be retrieved.
+
+        Returns:
+            UserInDB: The user data.
+        """
+        query = select(UserInDB).where(UserInDB.id == user_id)
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
+
+    async def update(self, user: UserInDB) -> UserInDB:
+        """
+        Update an existing user in the database.
+
+        Args:
+            user (UserInDB): The user data to be updated.
+
+        Returns:
+            UserInDB: The updated user data.
+        """
+        self.session.add(user)
+        await self.session.commit()
+        await self.session.refresh(user)
+        return user
+
+    async def delete(self, user: UserInDB) -> UserInDB:
+        """
+        Delete a user from the database.
+
+        Args:
+            user (UserInDB): The user data to be deleted.
+
+        Returns:
+            UserInDB: The deleted user data.
+        """
+        await self.session.delete(user)
+        await self.session.commit()
+        return user
+
+
+# app/repositories/base_repository.py
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+class BaseRepository:
+    def __init__(self, session: AsyncSession):
+        """
+        Initialize the BaseRepository with a database session.
+
+        Args:
+            session (AsyncSession): The database session.
+        """
+        self.session = session
+
+
+# app/models/user_model.py
+
+from typing import Optional
+from pydantic import BaseModel, EmailStr, Field
+from datetime import date
+
+class UserBase(BaseModel):
+    """
+    Base model for user information.
+    """
+    username: str = Field(..., min_length=3, max_length=50)
+    email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[date] = None
+
+class UserCreate(UserBase):
+    """
+    Model for creating a new user.
+    """
+    password: str = Field(..., min_length=8)
+
+class UserUpdate(UserBase):
+    """
+    Model for updating an existing user.
+    """
+
+class UserInDBBase(UserBase):
+    """
+    Base model for user information stored in the database.
+    """
+    id: int
+
+    class Config:
+        orm_mode = True
+
+class User(UserInDBBase):
+    """
+    Model for user information returned to the client.
+    """
+
+class UserInDB(UserInDBBase):
+    """
+    Model for user information stored in the database, including hashed password.
+    """
+    hashed_password: str
+
+
+# app/dependencies.py
+
 from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-from .user_repository import UserRepository
+from sqlalchemy.ext.asyncio import AsyncSession
+from .database import get_session
+from .repositories.user_repository import UserRepository
 from .services.call_processing_service import CallProcessingService
 
-DATABASE_URL = "postgresql+asyncpg://user:password@localhost/dbname"
+def get_user_repo(session: AsyncSession = Depends(get_session)) -> UserRepository:
+    """
+    Dependency to get the user repository.
+
+    Args:
+        session (AsyncSession): The database session.
+
+    Returns:
+        UserRepository: The user repository.
+    """
+    return UserRepository(session)
+
+def get_call_processing_service(user_repo: UserRepository = Depends(get_user_repo)) -> CallProcessingService:
+    """
+    Dependency to get the call processing service.
+
+    Args:
+        user_repo (UserRepository): The user repository.
+
+    Returns:
+        CallProcessingService: The call processing service.
+    """
+    return CallProcessingService(user_repo)
+
+
+# app/database.py
+
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from .config import settings
+
+DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 AsyncSessionLocal = sessionmaker(
@@ -187,80 +372,19 @@ async def get_session() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         yield session
 
-def get_user_repository(session: AsyncSession = Depends(get_session)) -> UserRepository:
-    """
-    Dependency to get the user repository.
 
-    Args:
-        session (AsyncSession): The database session.
+# app/config.py
 
-    Returns:
-        UserRepository: The user repository.
-    """
-    return UserRepository(session)
+from pydantic import BaseSettings
 
-def get_call_processing_service(user_repo: UserRepository = Depends(get_user_repository)) -> CallProcessingService:
-    """
-    Dependency to get the call processing service.
-
-    Args:
-        user_repo (UserRepository): The user repository.
-
-    Returns:
-        CallProcessingService: The call processing service.
-    """
-    return CallProcessingService(user_repo)
-
-
-# app/models/user_model.py
-
-from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
-from datetime import date
-
-
-class UserBase(BaseModel):
-    """
-    Base model for user information.
-    """
-    username: str = Field(..., min_length=3, max_length=50)
-    email: EmailStr
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    date_of_birth: Optional[date] = None
-
-
-class UserCreate(UserBase):
-    """
-    Model for creating a new user.
-    """
-    password: str = Field(..., min_length=8)
-
-
-class UserUpdate(UserBase):
-    """
-    Model for updating an existing user.
-    """
-
-
-class UserInDBBase(UserBase):
-    """
-    Base model for user information stored in the database.
-    """
-    id: int
+class Settings(BaseSettings):
+    database_hostname: str
+    database_port: str
+    database_password: str
+    database_name: str
+    database_username: str
 
     class Config:
-        orm_mode = True
+        env_file = ".env"
 
-
-class User(UserInDBBase):
-    """
-    Model for user information returned to the client.
-    """
-
-
-class UserInDB(UserInDBBase):
-    """
-    Model for user information stored in the database, including hashed password.
-    """
-    hashed_password: str
+settings = Settings()
