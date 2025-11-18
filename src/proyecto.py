@@ -181,6 +181,7 @@ class CallProcessingService:
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.user_model import UserCreate, UserUpdate, UserInDB
+from sqlalchemy.future import select
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
@@ -400,6 +401,7 @@ from .config import settings
 DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
+
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
