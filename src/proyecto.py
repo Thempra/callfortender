@@ -102,26 +102,33 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
 
 # app/services/call_processing_service.py
 
-from typing import Optional
+from typing import List
 from ..repositories.user_repository import UserRepository
+from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
-        self._user_repo = user_repo
+        """
+        Initialize the CallProcessingService with a UserRepository.
+
+        Args:
+            user_repo (UserRepository): The repository for user operations.
+        """
+        self.user_repo = user_repo
 
     async def create_user(self, user: UserCreate) -> UserInDB:
         """
         Create a new user.
 
         Args:
-            user (UserCreate): The user data to be created.
+            user (UserCreate): The data to create the user with.
 
         Returns:
             UserInDB: The created user data.
         """
-        return await self._user_repo.create(user)
+        return await self.user_repo.create(user)
 
-    async def get_users(self, skip: int = 0, limit: int = 10) -> list[UserInDB]:
+    async def get_users(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
         """
         Retrieve a list of users.
 
@@ -132,9 +139,9 @@ class CallProcessingService:
         Returns:
             List[UserInDB]: A list of user data.
         """
-        return await self._user_repo.get_all(skip, limit)
+        return await self.user_repo.get_all(skip, limit)
 
-    async def get_user(self, user_id: int) -> Optional[UserInDB]:
+    async def get_user(self, user_id: int) -> UserInDB:
         """
         Retrieve a user by ID.
 
@@ -142,9 +149,9 @@ class CallProcessingService:
             user_id (int): The ID of the user to retrieve.
 
         Returns:
-            Optional[UserInDB]: The retrieved user data or None if not found.
+            UserInDB: The retrieved user data.
         """
-        return await self._user_repo.get_by_id(user_id)
+        return await self.user_repo.get_by_id(user_id)
 
     async def update_user(self, user_id: int, user_update: UserUpdate) -> UserInDB:
         """
@@ -157,7 +164,7 @@ class CallProcessingService:
         Returns:
             UserInDB: The updated user data.
         """
-        return await self._user_repo.update(user_id, user_update)
+        return await self.user_repo.update(user_id, user_update)
 
     async def delete_user(self, user_id: int) -> UserInDB:
         """
@@ -169,35 +176,36 @@ class CallProcessingService:
         Returns:
             UserInDB: The deleted user data.
         """
-        return await self._user_repo.delete(user_id)
+        return await self.user_repo.delete(user_id)
 
 
 # app/repositories/user_repository.py
 
-from typing import Optional, List
-from sqlalchemy.future import select
-from ..models.user_model import UserInDB, UserCreate, UserUpdate
-from .base_repository import BaseRepository
+from sqlalchemy.ext.asyncio import AsyncSession
+from ..models.user_model import UserCreate, UserUpdate, UserInDBBase, UserInDB
 
-class UserRepository(BaseRepository):
+class UserRepository:
+    def __init__(self, session: AsyncSession):
+        """
+        Initialize the UserRepository with a database session.
+
+        Args:
+            session (AsyncSession): The database session.
+        """
+        self.session = session
+
     async def create(self, user: UserCreate) -> UserInDB:
         """
         Create a new user.
 
         Args:
-            user (UserCreate): The user data to be created.
+            user (UserCreate): The data to create the user with.
 
         Returns:
             UserInDB: The created user data.
         """
-        db_user = UserInDB(
-            username=user.username,
-            email=user.email,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            date_of_birth=user.date_of_birth,
-            hashed_password=self._hash_password(user.password)
-        )
+        db_user = UserInDBBase(**user.dict())
+        db_user.hashed_password = self._hash_password(user.password)
         self.session.add(db_user)
         await self.session.commit()
         await self.session.refresh(db_user)
@@ -219,7 +227,7 @@ class UserRepository(BaseRepository):
         )
         return result.scalars().all()
 
-    async def get_by_id(self, user_id: int) -> Optional[UserInDB]:
+    async def get_by_id(self, user_id: int) -> UserInDB:
         """
         Retrieve a user by ID.
 
@@ -227,7 +235,7 @@ class UserRepository(BaseRepository):
             user_id (int): The ID of the user to retrieve.
 
         Returns:
-            Optional[UserInDB]: The retrieved user data or None if not found.
+            UserInDB: The retrieved user data or None if not found.
         """
         result = await self.session.execute(
             select(UserInDB).where(UserInDB.id == user_id)
@@ -285,15 +293,6 @@ class UserRepository(BaseRepository):
         """
         # Placeholder for actual hashing logic
         return password
-
-
-# app/repositories/base_repository.py
-
-from sqlalchemy.ext.asyncio import AsyncSession
-
-class BaseRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
 
 
 # app/models/user_model.py
@@ -395,7 +394,7 @@ AsyncSessionLocal = sessionmaker(
 
 async def get_db():
     """
-    Dependency to get the database session.
+    Dependency to get a database session.
 
     Yields:
         AsyncSession: The database session.
@@ -414,9 +413,6 @@ class Settings(BaseSettings):
     database_password: str
     database_name: str
     database_username: str
-    secret_key: str
-    algorithm: str
-    access_token_expire_minutes: int
 
     class Config:
         env_file = ".env"
