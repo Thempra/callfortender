@@ -1,9 +1,15 @@
 import pytest
-from pydantic import ValidationError
-from datetime import date
+from fastapi.testclient import TestClient
 from src.user_model import UserBase, UserCreate, UserUpdate, UserInDBBase, User, UserInDB
+from datetime import date
 
 # Fixtures
+@pytest.fixture
+def client():
+    from fastapi import FastAPI
+    app = FastAPI()
+    return TestClient(app)
+
 @pytest.fixture
 def valid_user_data():
     return {
@@ -40,6 +46,22 @@ def test_user_in_db_valid_data(valid_user_in_db_data):
     assert user_in_db.username == valid_user_in_db_data["username"]
     assert user_in_db.email == valid_user_in_db_data["email"]
     assert user_in_db.hashed_password == valid_user_in_db_data["hashed_password"]
+
+def test_user_update_no_data():
+    user = UserUpdate()
+    assert user.first_name is None
+    assert user.last_name is None
+    assert user.date_of_birth is None
+
+def test_user_update_partial_data():
+    user_data = {
+        "first_name": "John",
+        "last_name": "Doe"
+    }
+    user = UserUpdate(**user_data)
+    assert user.first_name == "John"
+    assert user.last_name == "Doe"
+    assert user.date_of_birth is None
 
 # Tests de edge cases
 def test_create_user_min_length_username():
@@ -144,19 +166,3 @@ def test_user_base_invalid_username_length():
     
     with pytest.raises(ValidationError):
         UserBase(username="", email="test@example.com")
-
-def test_user_update_no_data():
-    user = UserUpdate()
-    assert user.first_name is None
-    assert user.last_name is None
-    assert user.date_of_birth is None
-
-def test_user_update_partial_data():
-    user_data = {
-        "first_name": "John",
-        "last_name": "Doe"
-    }
-    user = UserUpdate(**user_data)
-    assert user.first_name == "John"
-    assert user.last_name == "Doe"
-    assert user.date_of_birth is None
