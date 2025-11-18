@@ -59,7 +59,7 @@ async def get_user(user_id: int, call_service: CallProcessingService = Depends(g
     try:
         return await call_service.get_user(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.put("/users/{user_id}", response_model=User)
 async def update_user(user_id: int, user_update: UserUpdate, call_service: CallProcessingService = Depends(get_call_processing_service)):
@@ -77,7 +77,7 @@ async def update_user(user_id: int, user_update: UserUpdate, call_service: CallP
     try:
         return await call_service.update_user(user_id, user_update)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.delete("/users/{user_id}", response_model=User)
 async def delete_user(user_id: int, call_service: CallProcessingService = Depends(get_call_processing_service)):
@@ -94,7 +94,7 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
     try:
         return await call_service.delete_user(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # app/services/call_processing_service.py
@@ -105,7 +105,13 @@ from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
-        self._user_repo = user_repo
+        """
+        Initialize the CallProcessingService with a UserRepository.
+
+        Args:
+            user_repo (UserRepository): The repository for user operations.
+        """
+        self.user_repo = user_repo
 
     async def create_user(self, user: UserCreate) -> UserInDB:
         """
@@ -117,7 +123,7 @@ class CallProcessingService:
         Returns:
             UserInDB: The created user data.
         """
-        return await self._user_repo.create(user)
+        return await self.user_repo.create(user)
 
     async def get_users(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
         """
@@ -130,7 +136,7 @@ class CallProcessingService:
         Returns:
             List[UserInDB]: A list of user data.
         """
-        return await self._user_repo.get_all(skip, limit)
+        return await self.user_repo.get_all(skip, limit)
 
     async def get_user(self, user_id: int) -> UserInDB:
         """
@@ -142,7 +148,10 @@ class CallProcessingService:
         Returns:
             UserInDB: The retrieved user data.
         """
-        return await self._user_repo.get_by_id(user_id)
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+        return user
 
     async def update_user(self, user_id: int, user_update: UserUpdate) -> UserInDB:
         """
@@ -155,7 +164,7 @@ class CallProcessingService:
         Returns:
             UserInDB: The updated user data.
         """
-        return await self._user_repo.update(user_id, user_update)
+        return await self.user_repo.update(user_id, user_update)
 
     async def delete_user(self, user_id: int) -> UserInDB:
         """
@@ -167,18 +176,24 @@ class CallProcessingService:
         Returns:
             UserInDB: The deleted user data.
         """
-        return await self._user_repo.delete(user_id)
+        return await self.user_repo.delete(user_id)
 
 
 # app/repositories/user_repository.py
 
+from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from ..models.user_model import UserInDB, UserCreate, UserUpdate
+from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
-        self._session = session
+        """
+        Initialize the UserRepository with a database session.
+
+        Args:
+            session (AsyncSession): The database session.
+        """
+        self.session = session
 
     async def create(self, user: UserCreate) -> UserInDB:
         """
@@ -191,12 +206,12 @@ class UserRepository:
             UserInDB: The created user data.
         """
         db_user = UserInDB(**user.dict(), hashed_password=self._hash_password(user.password))
-        self._session.add(db_user)
-        await self._session.commit()
-        await self._session.refresh(db_user)
+        self.session.add(db_user)
+        await self.session.commit()
+        await self.session.refresh(db_user)
         return db_user
 
-    async def get_all(self, skip: int = 0, limit: int = 10) -> list[UserInDB]:
+    async def get_all(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
         """
         Retrieve a list of users.
 
@@ -207,7 +222,7 @@ class UserRepository:
         Returns:
             List[UserInDB]: A list of user data.
         """
-        result = await self._session.execute(
+        result = await self.session.execute(
             select(UserInDB).offset(skip).limit(limit)
         )
         return result.scalars().all()
@@ -222,7 +237,7 @@ class UserRepository:
         Returns:
             UserInDB: The retrieved user data.
         """
-        result = await self._session.execute(
+        result = await self.session.execute(
             select(UserInDB).where(UserInDB.id == user_id)
         )
         return result.scalar_one_or_none()
@@ -243,9 +258,9 @@ class UserRepository:
             raise ValueError("User not found")
         for key, value in user_update.dict(exclude_unset=True).items():
             setattr(db_user, key, value)
-        self._session.add(db_user)
-        await self._session.commit()
-        await self._session.refresh(db_user)
+        self.session.add(db_user)
+        await self.session.commit()
+        await self.session.refresh(db_user)
         return db_user
 
     async def delete(self, user_id: int) -> UserInDB:
@@ -261,8 +276,8 @@ class UserRepository:
         db_user = await self.get_by_id(user_id)
         if not db_user:
             raise ValueError("User not found")
-        await self._session.delete(db_user)
-        await self._session.commit()
+        await self.session.delete(db_user)
+        await self.session.commit()
         return db_user
 
     @staticmethod
@@ -364,7 +379,7 @@ async def get_call_service(user_repo: UserRepository = Depends(get_user_repo)) -
     Dependency to get a CallProcessingService instance.
 
     Args:
-        user_repo (UserRepository): The user repository.
+        user_repo (UserRepository): The repository for user operations.
 
     Returns:
         CallProcessingService: An instance of CallProcessingService.
@@ -392,7 +407,7 @@ async def get_session() -> AsyncSession:
     Dependency to get a database session.
 
     Yields:
-        AsyncSession: A database session.
+        AsyncSession: A new database session.
     """
     async with AsyncSessionLocal() as session:
         yield session
@@ -408,9 +423,6 @@ class Settings(BaseSettings):
     database_password: str
     database_name: str
     database_username: str
-    secret_key: str
-    algorithm: str
-    access_token_expire_minutes: int
 
     class Config:
         env_file = ".env"
