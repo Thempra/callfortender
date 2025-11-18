@@ -1,10 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
-from datetime import date
 from src.app.api.router import router
-from src.app.models.user_model import UserCreate, UserUpdate
-from src.app.services.call_processing_service import CallProcessingService
+from src.app.models.user_model import UserCreate, UserUpdate, User
 from unittest.mock import AsyncMock
+from datetime import date
 
 # Fixtures
 @pytest.fixture
@@ -34,7 +33,7 @@ def valid_user_update_data():
 
 @pytest.fixture
 def call_processing_service_mock():
-    mock = AsyncMock(spec=CallProcessingService)
+    mock = AsyncMock()
     mock.create_user.return_value = User(
         id=1,
         username="testuser",
