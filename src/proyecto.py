@@ -179,11 +179,10 @@ class CallProcessingService:
 # app/repositories/user_repository.py
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from ..models.user_model import UserInDB, User
-from .base_repository import BaseRepository
+from ..models.user_model import UserInDB, UserCreate, UserUpdate, User
+from ..database import get_db
 
-class UserRepository(BaseRepository):
+class UserRepository:
     def __init__(self, session: AsyncSession):
         """
         Initialize the UserRepository with an AsyncSession.
@@ -191,22 +190,24 @@ class UserRepository(BaseRepository):
         Args:
             session (AsyncSession): The database session.
         """
-        super().__init__(session)
+        self.session = session
 
-    async def create(self, user: UserInDB) -> User:
+    async def create(self, user: UserCreate) -> User:
         """
         Create a new user.
 
         Args:
-            user (UserInDB): The user data to be created.
+            user (UserCreate): The user data to be created.
 
         Returns:
             User: The created user data.
         """
-        self.session.add(user)
+        hashed_password = self._hash_password(user.password)
+        db_user = UserInDB(**user.dict(), hashed_password=hashed_password)
+        self.session.add(db_user)
         await self.session.commit()
-        await self.session.refresh(user)
-        return user
+        await self.session.refresh(db_user)
+        return db_user
 
     async def get_all(self, skip: int = 0, limit: int = 10) -> List[User]:
         """
@@ -272,20 +273,18 @@ class UserRepository(BaseRepository):
         await self.session.commit()
         return db_user
 
-
-# app/repositories/base_repository.py
-
-from sqlalchemy.ext.asyncio import AsyncSession
-
-class BaseRepository:
-    def __init__(self, session: AsyncSession):
+    def _hash_password(self, password: str) -> str:
         """
-        Initialize the BaseRepository with an AsyncSession.
+        Hash a password.
 
         Args:
-            session (AsyncSession): The database session.
+            password (str): The password to hash.
+
+        Returns:
+            str: The hashed password.
         """
-        self.session = session
+        # Placeholder for actual hashing logic
+        return password
 
 
 # app/models/user_model.py
