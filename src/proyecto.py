@@ -57,17 +57,14 @@ async def get_user(user_id: int, call_service: CallProcessingService = Depends(g
         User: The retrieved user data.
     """
     try:
-        user = await call_service.get_user(user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        return user
+        return await call_service.get_user(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.put("/users/{user_id}", response_model=User)
 async def update_user(user_id: int, user_update: UserUpdate, call_service: CallProcessingService = Depends(get_call_processing_service)):
     """
-    Update an existing user.
+    Update a user by ID.
 
     Args:
         user_id (int): The ID of the user to update.
@@ -80,7 +77,7 @@ async def update_user(user_id: int, user_update: UserUpdate, call_service: CallP
     try:
         return await call_service.update_user(user_id, user_update)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.delete("/users/{user_id}", response_model=User)
 async def delete_user(user_id: int, call_service: CallProcessingService = Depends(get_call_processing_service)):
@@ -97,13 +94,14 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
     try:
         return await call_service.delete_user(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # app/services/call_processing_service.py
 
-from typing import Optional
+from typing import List
 from ..repositories.user_repository import UserRepository
+from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
@@ -127,7 +125,7 @@ class CallProcessingService:
         """
         return await self.user_repo.create(user)
 
-    async def get_users(self, skip: int = 0, limit: int = 10) -> list[UserInDB]:
+    async def get_users(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
         """
         Retrieve a list of users.
 
@@ -140,7 +138,7 @@ class CallProcessingService:
         """
         return await self.user_repo.get_all(skip, limit)
 
-    async def get_user(self, user_id: int) -> Optional[UserInDB]:
+    async def get_user(self, user_id: int) -> UserInDB:
         """
         Retrieve a user by ID.
 
@@ -148,13 +146,16 @@ class CallProcessingService:
             user_id (int): The ID of the user to retrieve.
 
         Returns:
-            Optional[UserInDB]: The retrieved user data or None if not found.
+            UserInDB: The retrieved user data.
         """
-        return await self.user_repo.get_by_id(user_id)
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError(f"User with id {user_id} not found")
+        return user
 
     async def update_user(self, user_id: int, user_update: UserUpdate) -> UserInDB:
         """
-        Update an existing user.
+        Update a user by ID.
 
         Args:
             user_id (int): The ID of the user to update.
@@ -180,10 +181,9 @@ class CallProcessingService:
 
 # app/repositories/user_repository.py
 
-from typing import Optional, List
+from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserBase, UserCreate, UserUpdate, UserInDB
-from sqlalchemy.future import select
+from ..models.user_model import UserCreate, UserUpdate, UserInDBBase, UserInDB
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
@@ -225,7 +225,7 @@ class UserRepository:
         result = await self.session.execute(select(UserInDB).offset(skip).limit(limit))
         return result.scalars().all()
 
-    async def get_by_id(self, user_id: int) -> Optional[UserInDB]:
+    async def get_by_id(self, user_id: int) -> UserInDBBase:
         """
         Retrieve a user by ID.
 
@@ -233,14 +233,14 @@ class UserRepository:
             user_id (int): The ID of the user to retrieve.
 
         Returns:
-            Optional[UserInDB]: The retrieved user data or None if not found.
+            UserInDBBase: The retrieved user data or None if not found.
         """
         result = await self.session.execute(select(UserInDB).where(UserInDB.id == user_id))
         return result.scalar_one_or_none()
 
     async def update(self, user_id: int, user_update: UserUpdate) -> UserInDB:
         """
-        Update an existing user.
+        Update a user by ID.
 
         Args:
             user_id (int): The ID of the user to update.
