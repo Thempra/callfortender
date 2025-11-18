@@ -52,6 +52,14 @@ def call_processing_service_mock():
             date_of_birth=date(1990, 1, 1)
         )
     ]
+    mock.get_user_by_id.return_value = User(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        first_name="John",
+        last_name="Doe",
+        date_of_birth=date(1990, 1, 1)
+    )
     mock.update_user.return_value = User(
         id=1,
         username="testuser",
@@ -89,6 +97,12 @@ def test_read_users(app_with_mocked_service):
     assert response.status_code == 200
     users = response.json()
     assert len(users) == 1
+
+def test_read_user_by_id(app_with_mocked_service):
+    response = app_with_mocked_service.get("/users/1")
+    assert response.status_code == 200
+    user = response.json()
+    assert user["id"] == 1
 
 def test_update_user_valid_data(app_with_mocked_service, valid_user_update_data):
     response = app_with_mocked_service.put("/users/1", json=valid_user_update_data)
@@ -168,10 +182,14 @@ def test_create_user_invalid_username_length(app_with_mocked_service):
     response = app_with_mocked_service.post("/users/", json=user_data)
     assert response.status_code == 422
 
+def test_read_user_by_invalid_id(app_with_mocked_service):
+    response = app_with_mocked_service.get("/users/0")
+    assert response.status_code == 404
+
 def test_update_user_invalid_id(app_with_mocked_service, valid_user_update_data):
     response = app_with_mocked_service.put("/users/0", json=valid_user_update_data)
-    assert response.status_code == 422
+    assert response.status_code == 404
 
 def test_delete_user_invalid_id(app_with_mocked_service):
     response = app_with_mocked_service.delete("/users/0")
-    assert response.status_code == 422
+    assert response.status_code == 404
