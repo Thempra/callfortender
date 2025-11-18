@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List
 from ..services.call_processing_service import CallProcessingService
-from ..models.user_model import UserCreate, User, UserInDB
+from ..models.user_model import UserCreate, User, UserUpdate
 from ..dependencies import get_call_processing_service
 
 router = APIRouter()
@@ -59,7 +59,7 @@ async def get_user(user_id: int, call_service: CallProcessingService = Depends(g
     try:
         return await call_service.get_user(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.put("/users/{user_id}", response_model=User)
 async def update_user(user_id: int, user_update: UserUpdate, call_service: CallProcessingService = Depends(get_call_processing_service)):
@@ -77,7 +77,7 @@ async def update_user(user_id: int, user_update: UserUpdate, call_service: CallP
     try:
         return await call_service.update_user(user_id, user_update)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.delete("/users/{user_id}", response_model=User)
 async def delete_user(user_id: int, call_service: CallProcessingService = Depends(get_call_processing_service)):
@@ -94,7 +94,7 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
     try:
         return await call_service.delete_user(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # app/services/call_processing_service.py
@@ -179,8 +179,9 @@ class CallProcessingService:
 # app/repositories/user_repository.py
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserInDB, UserCreate, UserUpdate, User
-from ..database import Base
+from sqlalchemy.future import select
+from ..models.user_model import UserInDB, User
+from .base_repository import BaseRepository
 
 class UserRepository(BaseRepository):
     def __init__(self, session: AsyncSession):
@@ -192,21 +193,20 @@ class UserRepository(BaseRepository):
         """
         super().__init__(session)
 
-    async def create(self, user: UserCreate) -> User:
+    async def create(self, user: UserInDB) -> User:
         """
         Create a new user.
 
         Args:
-            user (UserCreate): The user data to be created.
+            user (UserInDB): The user data to be created.
 
         Returns:
             User: The created user data.
         """
-        db_user = UserInDB(**user.dict(), hashed_password=self._hash_password(user.password))
-        self.session.add(db_user)
+        self.session.add(user)
         await self.session.commit()
-        await self.session.refresh(db_user)
-        return db_user
+        await self.session.refresh(user)
+        return user
 
     async def get_all(self, skip: int = 0, limit: int = 10) -> List[User]:
         """
@@ -271,20 +271,6 @@ class UserRepository(BaseRepository):
         await self.session.delete(db_user)
         await self.session.commit()
         return db_user
-
-    @staticmethod
-    def _hash_password(password: str) -> str:
-        """
-        Hash a password.
-
-        Args:
-            password (str): The password to hash.
-
-        Returns:
-            str: The hashed password.
-        """
-        # Placeholder for actual hashing logic
-        return password
 
 
 # app/repositories/base_repository.py
