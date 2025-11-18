@@ -13,7 +13,7 @@ router = APIRouter()
 async def create_user(user: UserCreate, call_service: CallProcessingService = Depends(get_call_processing_service)):
     """
     Create a new user.
-    
+
     Args:
         user (UserCreate): The user data to be created.
         call_service (CallProcessingService): Dependency injected service for call processing.
@@ -79,6 +79,7 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # app/services/call_processing_service.py
 
 from typing import List
@@ -139,9 +140,8 @@ class CallProcessingService:
         db_user = await self.user_repo.get_by_id(user_id)
         if not db_user:
             raise ValueError("User not found")
-        updated_data = user_update.dict(exclude_unset=True)
-        for key, value in updated_data.items():
-            setattr(db_user, key, value)
+        for field, value in user_update.dict(exclude_unset=True).items():
+            setattr(db_user, field, value)
         return await self.user_repo.update(db_user)
 
     async def delete_user(self, user_id: int) -> UserInDB:
@@ -159,100 +159,13 @@ class CallProcessingService:
             raise ValueError("User not found")
         return await self.user_repo.delete(db_user)
 
+
 # app/repositories/user_repository.py
-
-from typing import List
-from ..models.user_model import UserInDB, User
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from sqlalchemy.orm import Session
-
-class UserRepository:
-    def __init__(self, session: AsyncSession):
-        """
-        Initialize the UserRepository with an AsyncSession.
-
-        Args:
-            session (AsyncSession): The database session.
-        """
-        self.session = session
-
-    async def create(self, user: UserInDB) -> UserInDB:
-        """
-        Create a new user in the database.
-
-        Args:
-            user (UserInDB): The user data to be created.
-
-        Returns:
-            UserInDB: The created user data.
-        """
-        self.session.add(user)
-        await self.session.commit()
-        await self.session.refresh(user)
-        return user
-
-    async def get_all(self, skip: int, limit: int) -> List[User]:
-        """
-        Retrieve a list of users from the database.
-
-        Args:
-            skip (int): Number of records to skip.
-            limit (int): Maximum number of records to return.
-
-        Returns:
-            List[User]: A list of user data.
-        """
-        result = await self.session.execute(select(UserInDB).offset(skip).limit(limit))
-        return result.scalars().all()
-
-    async def get_by_id(self, user_id: int) -> UserInDB:
-        """
-        Retrieve a user by ID from the database.
-
-        Args:
-            user_id (int): The ID of the user to be retrieved.
-
-        Returns:
-            UserInDB: The user data.
-        """
-        result = await self.session.execute(select(UserInDB).where(UserInDB.id == user_id))
-        return result.scalar_one_or_none()
-
-    async def update(self, user: UserInDB) -> UserInDB:
-        """
-        Update a user in the database.
-
-        Args:
-            user (UserInDB): The user data to be updated.
-
-        Returns:
-            UserInDB: The updated user data.
-        """
-        await self.session.commit()
-        await self.session.refresh(user)
-        return user
-
-    async def delete(self, user: UserInDB) -> UserInDB:
-        """
-        Delete a user from the database.
-
-        Args:
-            user (UserInDB): The user data to be deleted.
-
-        Returns:
-            UserInDB: The deleted user data.
-        """
-        await self.session.delete(user)
-        await self.session.commit()
-        return user
-
-# app/dependencies.py
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from .repositories.user_repository import UserRepository
+from .user_repository import UserRepository
 from .services.call_processing_service import CallProcessingService
 
 DATABASE_URL = "postgresql+asyncpg://user:password@localhost/dbname"
@@ -297,3 +210,57 @@ def get_call_processing_service(user_repo: UserRepository = Depends(get_user_rep
         CallProcessingService: The call processing service.
     """
     return CallProcessingService(user_repo)
+
+
+# app/models/user_model.py
+
+from typing import Optional
+from pydantic import BaseModel, EmailStr, Field
+from datetime import date
+
+
+class UserBase(BaseModel):
+    """
+    Base model for user information.
+    """
+    username: str = Field(..., min_length=3, max_length=50)
+    email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[date] = None
+
+
+class UserCreate(UserBase):
+    """
+    Model for creating a new user.
+    """
+    password: str = Field(..., min_length=8)
+
+
+class UserUpdate(UserBase):
+    """
+    Model for updating an existing user.
+    """
+
+
+class UserInDBBase(UserBase):
+    """
+    Base model for user information stored in the database.
+    """
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+class User(UserInDBBase):
+    """
+    Model for user information returned to the client.
+    """
+
+
+class UserInDB(UserInDBBase):
+    """
+    Model for user information stored in the database, including hashed password.
+    """
+    hashed_password: str
