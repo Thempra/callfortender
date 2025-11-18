@@ -44,6 +44,23 @@ async def read_users(skip: int = 0, limit: int = 10, call_service: CallProcessin
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/users/{user_id}", response_model=User)
+async def read_user(user_id: int, call_service: CallProcessingService = Depends(get_call_processing_service)):
+    """
+    Retrieve a user by ID.
+
+    Args:
+        user_id (int): The ID of the user to be retrieved.
+        call_service (CallProcessingService): Dependency injected service for call processing.
+
+    Returns:
+        User: The user data.
+    """
+    try:
+        return await call_service.get_user_by_id(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.put("/users/{user_id}", response_model=User)
 async def update_user(user_id: int, user_update: UserUpdate, call_service: CallProcessingService = Depends(get_call_processing_service)):
     """
@@ -65,7 +82,7 @@ async def update_user(user_id: int, user_update: UserUpdate, call_service: CallP
 @router.delete("/users/{user_id}", response_model=User)
 async def delete_user(user_id: int, call_service: CallProcessingService = Depends(get_call_processing_service)):
     """
-    Delete a user.
+    Delete a user by ID.
 
     Args:
         user_id (int): The ID of the user to be deleted.
@@ -82,7 +99,9 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
 
 # app/services/call_processing_service.py
 
-from .user_repository import UserRepository
+from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
+from ..repositories.user_repository import UserRepository
 from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
 class CallProcessingService:
@@ -107,7 +126,7 @@ class CallProcessingService:
         """
         return await self.user_repo.create(user)
 
-    async def get_users(self, skip: int = 0, limit: int = 10) -> list[UserInDB]:
+    async def get_users(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
         """
         Retrieve a list of users.
 
@@ -147,7 +166,7 @@ class CallProcessingService:
 
     async def delete_user(self, user_id: int) -> UserInDB:
         """
-        Delete a user.
+        Delete a user by ID.
 
         Args:
             user_id (int): The ID of the user to be deleted.
@@ -162,9 +181,8 @@ class CallProcessingService:
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.user_model import UserCreate, UserUpdate, UserInDBBase, UserInDB
-from .base_repository import BaseRepository
 
-class UserRepository(BaseRepository):
+class UserRepository:
     def __init__(self, session: AsyncSession):
         """
         Initialize the user repository.
@@ -172,7 +190,7 @@ class UserRepository(BaseRepository):
         Args:
             session (AsyncSession): The database session.
         """
-        super().__init__(session)
+        self.session = session
 
     async def create(self, user: UserCreate) -> UserInDB:
         """
@@ -184,7 +202,7 @@ class UserRepository(BaseRepository):
         Returns:
             UserInDB: The created user data.
         """
-        db_user = UserInDB(**user.dict())
+        db_user = UserInDB(**user.dict(), hashed_password=self._hash_password(user.password))
         self.session.add(db_user)
         await self.session.commit()
         await self.session.refresh(db_user)
@@ -201,8 +219,9 @@ class UserRepository(BaseRepository):
         Returns:
             List[UserInDB]: A list of user data.
         """
-        query = self.session.query(UserInDB).offset(skip).limit(limit)
-        result = await self.session.execute(query)
+        result = await self.session.execute(
+            select(UserInDB).offset(skip).limit(limit)
+        )
         return result.scalars().all()
 
     async def get_by_id(self, user_id: int) -> UserInDB:
@@ -215,8 +234,9 @@ class UserRepository(BaseRepository):
         Returns:
             UserInDB: The user data.
         """
-        query = self.session.query(UserInDB).where(UserInDB.id == user_id)
-        result = await self.session.execute(query)
+        result = await self.session.execute(
+            select(UserInDB).where(UserInDB.id == user_id)
+        )
         return result.scalar_one_or_none()
 
     async def update(self, user_id: int, user_update: UserUpdate) -> UserInDB:
@@ -242,7 +262,7 @@ class UserRepository(BaseRepository):
 
     async def delete(self, user_id: int) -> UserInDB:
         """
-        Delete a user.
+        Delete a user by ID.
 
         Args:
             user_id (int): The ID of the user to be deleted.
@@ -257,20 +277,19 @@ class UserRepository(BaseRepository):
         await self.session.commit()
         return db_user
 
-
-# app/repositories/base_repository.py
-
-from sqlalchemy.ext.asyncio import AsyncSession
-
-class BaseRepository:
-    def __init__(self, session: AsyncSession):
+    @staticmethod
+    def _hash_password(password: str) -> str:
         """
-        Initialize the base repository.
+        Hash a password.
 
         Args:
-            session (AsyncSession): The database session.
+            password (str): The password to be hashed.
+
+        Returns:
+            str: The hashed password.
         """
-        self.session = session
+        # Placeholder for actual hashing logic
+        return password
 
 
 # app/models/user_model.py
@@ -278,6 +297,10 @@ class BaseRepository:
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 from datetime import date
+from sqlalchemy import Column, Integer, String, Date
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
 
 class UserBase(BaseModel):
     """
@@ -314,11 +337,19 @@ class User(UserInDBBase):
     Model for user information returned to the client.
     """
 
-class UserInDB(UserInDBBase):
+class UserInDB(UserInDBBase, Base):
     """
     Model for user information stored in the database, including hashed password.
     """
-    hashed_password: str
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True)
+    first_name = Column(String)
+    last_name = Column(String)
+    date_of_birth = Column(Date)
+    hashed_password = Column(String)
 
 
 # app/dependencies.py
@@ -395,57 +426,3 @@ class Settings(BaseSettings):
         env_file = ".env"
 
 settings = Settings()
-
-
-# user_model.py
-
-from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
-from datetime import date
-
-
-class UserBase(BaseModel):
-    """
-    Base model for user information.
-    """
-    username: str = Field(..., min_length=3, max_length=50)
-    email: EmailStr
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    date_of_birth: Optional[date] = None
-
-
-class UserCreate(UserBase):
-    """
-    Model for creating a new user.
-    """
-    password: str = Field(..., min_length=8)
-
-
-class UserUpdate(UserBase):
-    """
-    Model for updating an existing user.
-    """
-
-
-class UserInDBBase(UserBase):
-    """
-    Base model for user information stored in the database.
-    """
-    id: int
-
-    class Config:
-        orm_mode = True
-
-
-class User(UserInDBBase):
-    """
-    Model for user information returned to the client.
-    """
-
-
-class UserInDB(UserInDBBase):
-    """
-    Model for user information stored in the database, including hashed password.
-    """
-    hashed_password: str
