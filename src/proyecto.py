@@ -112,7 +112,7 @@ from ..models.user_model import UserCreate, UserUpdate, User
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
         """
-        Initialize the CallProcessingService with a UserRepository.
+        Initialize the call processing service.
 
         Args:
             user_repo (UserRepository): The repository for user operations.
@@ -184,20 +184,19 @@ class CallProcessingService:
 
 # app/repositories/user_repository.py
 
-from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from ..models.user_model import UserInDB, User
 from typing import List
-from ..models.user_model import UserCreate, UserUpdate, UserInDB, User
-from .base_repository import BaseRepository
 
-class UserRepository(BaseRepository):
-    def __init__(self, session):
+class UserRepository:
+    def __init__(self, session: AsyncSession):
         """
-        Initialize the UserRepository with a database session.
+        Initialize the user repository.
 
         Args:
-            session: The database session.
+            session (AsyncSession): The database session.
         """
-        super().__init__(session)
+        self.session = session
 
     async def create(self, user: UserCreate) -> User:
         """
@@ -213,7 +212,7 @@ class UserRepository(BaseRepository):
         self.session.add(db_user)
         await self.session.commit()
         await self.session.refresh(db_user)
-        return db_user
+        return User.from_orm(db_user)
 
     async def get_all(self, skip: int = 0, limit: int = 10) -> List[User]:
         """
@@ -291,21 +290,6 @@ class UserRepository(BaseRepository):
         """
         # Placeholder for actual hashing logic
         return password
-
-
-# app/repositories/base_repository.py
-
-from sqlalchemy.ext.asyncio import AsyncSession
-
-class BaseRepository:
-    def __init__(self, session: AsyncSession):
-        """
-        Initialize the BaseRepository with a database session.
-
-        Args:
-            session (AsyncSession): The database session.
-        """
-        self.session = session
 
 
 # app/models/user_model.py
@@ -396,7 +380,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from .config import settings
 
-DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_host}/{settings.database_name}"
+DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 AsyncSessionLocal = sessionmaker(
@@ -421,10 +405,11 @@ async def get_db():
 from pydantic import BaseSettings
 
 class Settings(BaseSettings):
-    database_host: str
+    database_hostname: str
+    database_port: str
+    database_password: str
     database_name: str
     database_username: str
-    database_password: str
 
     class Config:
         env_file = ".env"
