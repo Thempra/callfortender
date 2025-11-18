@@ -1,6 +1,9 @@
+# user_model.py
+
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 from datetime import date
+
 
 class UserBase(BaseModel):
     """
@@ -12,17 +15,19 @@ class UserBase(BaseModel):
     last_name: Optional[str] = None
     date_of_birth: Optional[date] = None
 
+
 class UserCreate(UserBase):
     """
     Model for creating a new user.
     """
     password: str = Field(..., min_length=8)
 
+
 class UserUpdate(UserBase):
     """
     Model for updating an existing user.
     """
-    pass
+
 
 class UserInDBBase(UserBase):
     """
@@ -33,11 +38,12 @@ class UserInDBBase(UserBase):
     class Config:
         orm_mode = True
 
+
 class User(UserInDBBase):
     """
     Model for user information returned to the client.
     """
-    pass
+
 
 class UserInDB(UserInDBBase):
     """
