@@ -172,9 +172,9 @@ class CallProcessingService:
 
 # app/repositories/user_repository.py
 
-from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserCreate, UserUpdate, UserInDB
+from sqlalchemy.future import select
+from ..models.user_model import UserInDB, UserCreate, UserUpdate
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
@@ -190,13 +190,13 @@ class UserRepository:
         Returns:
             UserInDB: The created user data.
         """
-        db_user = UserInDB(**user.dict())
+        db_user = UserInDB(**user.dict(), hashed_password=self._hash_password(user.password))
         self._session.add(db_user)
         await self._session.commit()
         await self._session.refresh(db_user)
         return db_user
 
-    async def get_all(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
+    async def get_all(self, skip: int = 0, limit: int = 10) -> list[UserInDB]:
         """
         Retrieve a list of users.
 
@@ -264,6 +264,20 @@ class UserRepository:
         await self._session.delete(db_user)
         await self._session.commit()
         return db_user
+
+    @staticmethod
+    def _hash_password(password: str) -> str:
+        """
+        Hash a password.
+
+        Args:
+            password (str): The password to hash.
+
+        Returns:
+            str: The hashed password.
+        """
+        # Placeholder for actual hashing logic
+        return password
 
 
 # app/models/user_model.py
@@ -386,13 +400,19 @@ async def get_session() -> AsyncSession:
 
 # app/config.py
 
-from pydantic import BaseSettings, Field
+from pydantic import BaseSettings
 
 class Settings(BaseSettings):
-    database_hostname: str = Field(..., env="DATABASE_HOSTNAME")
-    database_port: str = Field(..., env="DATABASE_PORT")
-    database_password: str = Field(..., env="DATABASE_PASSWORD")
-    database_name: str = Field(..., env="DATABASE_NAME")
-    database_username: str = Field(..., env="DATABASE_USERNAME")
+    database_hostname: str
+    database_port: str
+    database_password: str
+    database_name: str
+    database_username: str
+    secret_key: str
+    algorithm: str
+    access_token_expire_minutes: int
+
+    class Config:
+        env_file = ".env"
 
 settings = Settings()
