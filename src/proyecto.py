@@ -105,13 +105,7 @@ from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
-        """
-        Initialize the CallProcessingService with a UserRepository.
-
-        Args:
-            user_repo (UserRepository): The repository for user operations.
-        """
-        self.user_repo = user_repo
+        self._user_repo = user_repo
 
     async def create_user(self, user: UserCreate) -> UserInDB:
         """
@@ -123,7 +117,7 @@ class CallProcessingService:
         Returns:
             UserInDB: The created user data.
         """
-        return await self.user_repo.create(user)
+        return await self._user_repo.create(user)
 
     async def get_users(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
         """
@@ -136,7 +130,7 @@ class CallProcessingService:
         Returns:
             List[UserInDB]: A list of user data.
         """
-        return await self.user_repo.get_all(skip, limit)
+        return await self._user_repo.get_all(skip, limit)
 
     async def get_user_by_id(self, user_id: int) -> UserInDB:
         """
@@ -148,7 +142,7 @@ class CallProcessingService:
         Returns:
             UserInDB: The retrieved user data.
         """
-        return await self.user_repo.get_by_id(user_id)
+        return await self._user_repo.get_by_id(user_id)
 
     async def update_user(self, user_id: int, user_update: UserUpdate) -> UserInDB:
         """
@@ -161,7 +155,7 @@ class CallProcessingService:
         Returns:
             UserInDB: The updated user data.
         """
-        return await self.user_repo.update(user_id, user_update)
+        return await self._user_repo.update(user_id, user_update)
 
     async def delete_user(self, user_id: int) -> UserInDB:
         """
@@ -173,24 +167,19 @@ class CallProcessingService:
         Returns:
             UserInDB: The deleted user data.
         """
-        return await self.user_repo.delete(user_id)
+        return await self._user_repo.delete(user_id)
 
 
 # app/repositories/user_repository.py
 
-from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserCreate, UserUpdate, UserInDB
+from sqlalchemy.future import select
+from ..models.user_model import UserInDB, UserCreate, UserUpdate
+from ..utils.security import hash_password
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
-        """
-        Initialize the UserRepository with a database session.
-
-        Args:
-            session (AsyncSession): The database session.
-        """
-        self.session = session
+        self._session = session
 
     async def create(self, user: UserCreate) -> UserInDB:
         """
@@ -208,14 +197,14 @@ class UserRepository:
             first_name=user.first_name,
             last_name=user.last_name,
             date_of_birth=user.date_of_birth,
-            hashed_password=self._hash_password(user.password)
+            hashed_password=hash_password(user.password)
         )
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
+        self._session.add(db_user)
+        await self._session.commit()
+        await self._session.refresh(db_user)
         return db_user
 
-    async def get_all(self, skip: int = 0, limit: int = 10) -> List[UserInDB]:
+    async def get_all(self, skip: int = 0, limit: int = 10) -> list[UserInDB]:
         """
         Retrieve a list of users.
 
@@ -226,7 +215,7 @@ class UserRepository:
         Returns:
             List[UserInDB]: A list of user data.
         """
-        result = await self.session.execute(
+        result = await self._session.execute(
             select(UserInDB).offset(skip).limit(limit)
         )
         return result.scalars().all()
@@ -241,7 +230,7 @@ class UserRepository:
         Returns:
             UserInDB: The retrieved user data.
         """
-        result = await self.session.execute(
+        result = await self._session.execute(
             select(UserInDB).where(UserInDB.id == user_id)
         )
         return result.scalar_one_or_none()
@@ -262,9 +251,9 @@ class UserRepository:
             raise ValueError("User not found")
         for key, value in user_update.dict(exclude_unset=True).items():
             setattr(db_user, key, value)
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
+        self._session.add(db_user)
+        await self._session.commit()
+        await self._session.refresh(db_user)
         return db_user
 
     async def delete(self, user_id: int) -> UserInDB:
@@ -280,23 +269,9 @@ class UserRepository:
         db_user = await self.get_by_id(user_id)
         if not db_user:
             raise ValueError("User not found")
-        await self.session.delete(db_user)
-        await self.session.commit()
+        await self._session.delete(db_user)
+        await self._session.commit()
         return db_user
-
-    @staticmethod
-    def _hash_password(password: str) -> str:
-        """
-        Hash a password.
-
-        Args:
-            password (str): The password to be hashed.
-
-        Returns:
-            str: The hashed password.
-        """
-        # Placeholder for actual hashing logic
-        return password
 
 
 # app/models/user_model.py
@@ -383,7 +358,7 @@ async def get_call_processing_service(user_repo: UserRepository = Depends(get_us
     Dependency to get a CallProcessingService instance.
 
     Args:
-        user_repo (UserRepository): The repository for user operations.
+        user_repo (UserRepository): The user repository.
 
     Returns:
         CallProcessingService: An instance of CallProcessingService.
@@ -395,11 +370,12 @@ async def get_call_processing_service(user_repo: UserRepository = Depends(get_us
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from .config import settings
+from ..config import settings
 
 DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
+
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -411,7 +387,7 @@ async def get_session() -> AsyncSession:
     Dependency to get a database session.
 
     Yields:
-        AsyncSession: A database session.
+        AsyncSession: A new database session.
     """
     async with AsyncSessionLocal() as session:
         yield session
@@ -419,16 +395,45 @@ async def get_session() -> AsyncSession:
 
 # app/config.py
 
-from pydantic import BaseSettings
+from pydantic import BaseSettings, Field
 
 class Settings(BaseSettings):
-    database_hostname: str
-    database_port: str
-    database_password: str
-    database_name: str
-    database_username: str
-
-    class Config:
-        env_file = ".env"
+    database_hostname: str = Field(..., env="DATABASE_HOSTNAME")
+    database_port: str = Field(..., env="DATABASE_PORT")
+    database_password: str = Field(..., env="DATABASE_PASSWORD")
+    database_name: str = Field(..., env="DATABASE_NAME")
+    database_username: str = Field(..., env="DATABASE_USERNAME")
 
 settings = Settings()
+
+
+# app/utils/security.py
+
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    """
+    Hash a password.
+
+    Args:
+        password (str): The password to hash.
+
+    Returns:
+        str: The hashed password.
+    """
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """
+    Verify a plain password against a hashed password.
+
+    Args:
+        plain_password (str): The plain password to verify.
+        hashed_password (str): The hashed password to compare against.
+
+    Returns:
+        bool: True if the passwords match, False otherwise.
+    """
+    return pwd_context.verify(plain_password, hashed_password)
