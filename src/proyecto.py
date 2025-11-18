@@ -100,6 +100,7 @@ async def delete_user(user_id: int, call_service: CallProcessingService = Depend
 # app/services/call_processing_service.py
 
 from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
 from ..repositories.user_repository import UserRepository
 from ..models.user_model import UserCreate, UserUpdate, UserInDB
 
@@ -181,6 +182,7 @@ class CallProcessingService:
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.user_model import UserCreate, UserUpdate, UserInDB
+from sqlalchemy.future import select
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
@@ -363,9 +365,8 @@ class UserInDB(UserInDBBase, Base):
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from ..repositories.user_repository import UserRepository
 from .database import get_session
-from .repositories.user_repository import UserRepository
-from .services.call_processing_service import CallProcessingService
 
 async def get_user_repo(session: AsyncSession = Depends(get_session)) -> UserRepository:
     """
@@ -375,7 +376,7 @@ async def get_user_repo(session: AsyncSession = Depends(get_session)) -> UserRep
         session (AsyncSession): The database session.
 
     Returns:
-        UserRepository: A repository for user operations.
+        UserRepository: An instance of the UserRepository.
     """
     return UserRepository(session)
 
@@ -387,7 +388,7 @@ async def get_call_processing_service(user_repo: UserRepository = Depends(get_us
         user_repo (UserRepository): The repository for user operations.
 
     Returns:
-        CallProcessingService: A service for call processing.
+        CallProcessingService: An instance of the CallProcessingService.
     """
     return CallProcessingService(user_repo)
 
