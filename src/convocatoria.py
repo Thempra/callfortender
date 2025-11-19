@@ -1,15 +1,15 @@
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 from datetime import date
 
 app = FastAPI()
 
 # Pydantic models for Convocatoria
 class ConvocatoriaBase(BaseModel):
-    titulo: str = Field(..., min_length=3, max_length=100)
-    descripcion: str
+    titulo: str = Field(..., min_length=5, max_length=100)
+    descripcion: str = Field(..., min_length=10)
     fecha_inicio: date
     fecha_fin: date
 
@@ -17,7 +17,10 @@ class ConvocatoriaCreate(ConvocatoriaBase):
     pass
 
 class ConvocatoriaUpdate(ConvocatoriaBase):
-    pass
+    titulo: Optional[str] = None
+    descripcion: Optional[str] = None
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
 
 class ConvocatoriaInDBBase(ConvocatoriaBase):
     id: int
@@ -47,7 +50,7 @@ class ConvocatoriaInDB(Base):
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-DATABASE_URL = "postgresql+asyncpg://user:password@localhost/dbname"
+DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 AsyncSessionLocal = sessionmaker(
@@ -107,11 +110,8 @@ async def create_convocatoria(convocatoria: ConvocatoriaCreate, repo: Convocator
     """
     Create a new convocatoria.
     """
-    try:
-        db_convocatoria = await repo.create(convocatoria)
-        return db_convocatoria
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    db_convocatoria = await repo.create(convocatoria)
+    return db_convocatoria
 
 @app.get("/convocatorias/", response_model=List[Convocatoria])
 async def read_convocatorias(skip: int = 0, limit: int = 10, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
