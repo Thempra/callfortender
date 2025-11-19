@@ -1,16 +1,12 @@
 import pytest
 from fastapi.testclient import TestClient
-from app.routers import users
-from app.models.user_model import UserCreate, UserUpdate, User
+from app.main import app
+from app.schemas.user import UserCreate, UserUpdate, User
 from unittest.mock import AsyncMock
-from datetime import date
 
 # Fixtures
 @pytest.fixture
 def client():
-    from fastapi import FastAPI
-    app = FastAPI()
-    app.include_router(users.router, prefix="/users", tags=["users"])
     return TestClient(app)
 
 @pytest.fixture
@@ -21,7 +17,7 @@ def valid_user_data():
         "password": "securepassword123",
         "first_name": "John",
         "last_name": "Doe",
-        "date_of_birth": date(1990, 1, 1)
+        "date_of_birth": "1990-01-01"
     }
 
 @pytest.fixture
@@ -32,7 +28,7 @@ def valid_user_update_data():
     }
 
 @pytest.fixture
-def call_processing_service_mock():
+def user_service_mock():
     mock = AsyncMock()
     mock.create_user.return_value = User(
         id=1,
@@ -40,7 +36,7 @@ def call_processing_service_mock():
         email="test@example.com",
         first_name="John",
         last_name="Doe",
-        date_of_birth=date(1990, 1, 1)
+        date_of_birth="1990-01-01"
     )
     mock.get_user_by_id.return_value = User(
         id=1,
@@ -48,7 +44,7 @@ def call_processing_service_mock():
         email="test@example.com",
         first_name="John",
         last_name="Doe",
-        date_of_birth=date(1990, 1, 1)
+        date_of_birth="1990-01-01"
     )
     mock.update_user.return_value = User(
         id=1,
@@ -56,7 +52,7 @@ def call_processing_service_mock():
         email="test@example.com",
         first_name="Jane",
         last_name="Smith",
-        date_of_birth=date(1990, 1, 1)
+        date_of_birth="1990-01-01"
     )
     mock.delete_user.return_value = User(
         id=1,
@@ -64,14 +60,14 @@ def call_processing_service_mock():
         email="test@example.com",
         first_name="John",
         last_name="Doe",
-        date_of_birth=date(1990, 1, 1)
+        date_of_birth="1990-01-01"
     )
     return mock
 
 @pytest.fixture
-def app_with_mocked_service(client, call_processing_service_mock):
-    from app.dependencies import get_call_processing_service
-    get_call_processing_service.__wrapped__ = lambda: call_processing_service_mock
+def app_with_mocked_service(client, user_service_mock):
+    from app.services.user import UserService
+    UserService.get_instance = lambda: user_service_mock
     return client
 
 # Tests de funcionalidad básica
