@@ -125,7 +125,7 @@ class UserService:
             User: The created user data.
         """
         hashed_password = pwd_context.hash(user.password)
-        db_user = UserInDB(**user.dict(), hashed_password=hashed_password)
+        db_user = UserInDB(**user.dict(), password=hashed_password)
         self.db.add(db_user)
         await self.db.commit()
         await self.db.refresh(db_user)
@@ -142,141 +142,52 @@ class UserService:
             User | None: The retrieved user data or None if not found.
         """
         result = await self.db.execute(select(UserInDB).where(UserInDB.id == user_id))
-        return result.scalar_one_or_none()
+        db_user = result.scalars().first()
+        return User.from_orm(db_user) if db_user else None
 
 # app/models/user_model.py
 from sqlalchemy import Column, Integer, String, Date
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
 class UserInDB(Base):
-    """
-    Model for user information stored in the database.
-    """
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, nullable=False)
-    email = Column(String(255), unique=True, nullable=False)
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    date_of_birth = Column(Date)
-    hashed_password = Column(String(255), nullable=False)
+    id: int = Column(Integer, primary_key=True, index=True)
+    username: str = Column(String(50), unique=True, index=True)
+    email: str = Column(String(255), unique=True, index=True)
+    first_name: str | None = Column(String(100))
+    last_name: str | None = Column(String(100))
+    date_of_birth: Date | None = Column(Date)
+    password: str = Column(String(255))
 
-# app/dependencies.py
-from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from .database import get_db
-from .repositories.user_repository import UserRepository
+# tests/test_entorno.py
+from fastapi.testclient import TestClient
+from app.main import app
 
-def get_user_repo(session: AsyncSession = Depends(get_db)) -> UserRepository:
-    """
-    Dependency to get the user repository.
+client = TestClient(app)
 
-    Args:
-        session (AsyncSession): The database session.
+def test_create_user():
+    response = client.post("/users/", json={"username": "testuser", "email": "test@example.com", "password": "securepassword"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["username"] == "testuser"
+    assert data["email"] == "test@example.com"
+    assert "id" in data
 
-    Returns:
-        UserRepository: The user repository.
-    """
-    return UserRepository(session)
+def test_get_user():
+    # First, create a user to retrieve
+    client.post("/users/", json={"username": "testuser", "email": "test@example.com", "password": "securepassword"})
+    response = client.get("/users/1")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["username"] == "testuser"
+    assert data["email"] == "test@example.com"
+    assert data["id"] == 1
 
-# app/repositories/user_repository.py
-from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserInDB
-from ..schemas import UserCreate, User
-
-class UserRepository:
-    def __init__(self, session: AsyncSession):
-        """
-        Initialize the user repository.
-
-        Args:
-            session (AsyncSession): The database session.
-        """
-        self.session = session
-
-    async def create_user(self, user: UserCreate) -> User:
-        """
-        Create a new user.
-
-        Args:
-            user (UserCreate): The user data to be created.
-
-        Returns:
-            User: The created user data.
-        """
-        db_user = UserInDB(**user.dict())
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
-        return User.from_orm(db_user)
-
-    async def get_user(self, user_id: int) -> User | None:
-        """
-        Get a user by ID.
-
-        Args:
-            user_id (int): The ID of the user to retrieve.
-
-        Returns:
-            User | None: The retrieved user data or None if not found.
-        """
-        result = await self.session.execute(select(UserInDB).where(UserInDB.id == user_id))
-        return result.scalar_one_or_none()
-
-# app/database.py
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from .config import settings
-
-DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
-
-engine = create_async_engine(DATABASE_URL, echo=True)
-AsyncSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
-
-async def get_db():
-    """
-    Dependency to get the database session.
-
-    Yields:
-        AsyncSession: The database session.
-    """
-    async with AsyncSessionLocal() as session:
-        yield session
-
-# app/config.py
-from pydantic import BaseSettings
-
-class Settings(BaseSettings):
-    database_hostname: str
-    database_port: str
-    database_password: str
-    database_name: str
-    database_username: str
-
-    class Config:
-        env_file = ".env"
-
-settings = Settings()
-
-# .env
-DATABASE_HOSTNAME=localhost
-DATABASE_PORT=5432
-DATABASE_PASSWORD=mysecretpassword
-DATABASE_NAME=mydatabase
-DATABASE_USERNAME=myuser
-
-# requirements.txt
-fastapi[all]
-asyncpg
-passlib
-bcrypt
-pytest
-coverage
-redis
+def test_get_user_not_found():
+    response = client.get("/users/999")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
