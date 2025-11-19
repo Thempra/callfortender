@@ -112,280 +112,46 @@ def get_call_processing_service(user_repo: UserRepository = Depends(get_user_rep
     """
     return CallProcessingService(user_repo)
 
-# app/database.py
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from .config import settings
+# tests/test_entorno.py
+from fastapi.testclient import TestClient
+from app.main import app
 
-DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
+client = TestClient(app)
 
-engine = create_async_engine(DATABASE_URL, echo=True)
-AsyncSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+def test_read_main():
+    response = client.get("/")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
 
-async def get_db():
-    """
-    Dependency to get the database session.
+def test_create_user():
+    user_data = {
+        "name": "John Doe",
+        "email": "john.doe@example.com"
+    }
+    response = client.post("/users/", json=user_data)
+    assert response.status_code == 200
+    assert response.json()["name"] == user_data["name"]
+    assert response.json()["email"] == user_data["email"]
 
-    Yields:
-        AsyncSession: The database session.
-    """
-    async with AsyncSessionLocal() as session:
-        yield session
+def test_read_user():
+    user_id = 1
+    response = client.get(f"/users/{user_id}")
+    assert response.status_code == 200
+    assert response.json()["id"] == user_id
 
-# app/config.py
-from pydantic import BaseSettings
+def test_update_user():
+    user_id = 1
+    update_data = {
+        "name": "Jane Doe",
+        "email": "jane.doe@example.com"
+    }
+    response = client.put(f"/users/{user_id}", json=update_data)
+    assert response.status_code == 200
+    assert response.json()["name"] == update_data["name"]
+    assert response.json()["email"] == update_data["email"]
 
-class Settings(BaseSettings):
-    database_hostname: str
-    database_port: str
-    database_password: str
-    database_name: str
-    database_username: str
-
-    class Config:
-        env_file = ".env"
-
-settings = Settings()
-
-# app/models/user_model.py
-from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
-from datetime import date
-from sqlalchemy import Column, Integer, String, Date
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
-
-class UserBase(BaseModel):
-    """
-    Base model for user information.
-    """
-    username: str = Field(..., min_length=3, max_length=50)
-    email: EmailStr
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    date_of_birth: Optional[date] = None
-
-class UserCreate(UserBase):
-    """
-    Model for creating a new user.
-    """
-    password: str = Field(..., min_length=8)
-
-class UserUpdate(UserBase):
-    """
-    Model for updating an existing user.
-    """
-
-class UserInDBBase(UserBase):
-    id: int
-
-    class Config:
-        orm_mode = True
-
-class User(UserInDBBase):
-    """
-    Model for user information returned to the client.
-    """
-
-class UserInDB(UserInDBBase):
-    """
-    Model for user information stored in the database, including hashed password.
-    """
-    hashed_password: str
-
-# app/repositories/base_repository.py
-from sqlalchemy.ext.asyncio import AsyncSession
-
-class BaseRepository:
-    def __init__(self, session: AsyncSession):
-        """
-        Initialize the base repository.
-
-        Args:
-            session (AsyncSession): The database session.
-        """
-        self.session = session
-
-# app/repositories/user_repository.py
-from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserInDB, UserCreate, UserUpdate, User
-from .base_repository import BaseRepository
-from sqlalchemy.future import select
-
-class UserRepository(BaseRepository):
-    def __init__(self, session: AsyncSession):
-        """
-        Initialize the user repository.
-
-        Args:
-            session (AsyncSession): The database session.
-        """
-        super().__init__(session)
-
-    async def create(self, user: UserCreate) -> User:
-        """
-        Create a new user.
-
-        Args:
-            user (UserCreate): The user data to be created.
-
-        Returns:
-            User: The created user data.
-        """
-        db_user = UserInDB(
-            username=user.username,
-            email=user.email,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            date_of_birth=user.date_of_birth,
-            hashed_password=self._hash_password(user.password)
-        )
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
-        return User.from_orm(db_user)
-
-    async def get_all(self, skip: int = 0, limit: int = 10) -> list[User]:
-        """
-        Retrieve a list of users.
-
-        Args:
-            skip (int): Number of records to skip.
-            limit (int): Maximum number of records to return.
-
-        Returns:
-            List[User]: A list of user data.
-        """
-        result = await self.session.execute(select(UserInDB).offset(skip).limit(limit))
-        return [User.from_orm(user) for user in result.scalars().all()]
-
-    async def get_by_id(self, user_id: int) -> User:
-        """
-        Retrieve a user by ID.
-
-        Args:
-            user_id (int): The ID of the user to retrieve.
-
-        Returns:
-            User: The retrieved user data.
-        """
-        result = await self.session.execute(select(UserInDB).where(UserInDB.id == user_id))
-        db_user = result.scalar_one_or_none()
-        if not db_user:
-            raise ValueError(f"User with id {user_id} not found")
-        return User.from_orm(db_user)
-
-    async def update(self, user_id: int, user_update: UserUpdate) -> User:
-        """
-        Update an existing user.
-
-        Args:
-            user_id (int): The ID of the user to update.
-            user_update (UserUpdate): The data to update the user with.
-
-        Returns:
-            User: The updated user data.
-        """
-        db_user = await self.get_by_id(user_id)
-        for key, value in user_update.dict(exclude_unset=True).items():
-            setattr(db_user, key, value)
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
-        return User.from_orm(db_user)
-
-    async def delete(self, user_id: int) -> User:
-        """
-        Delete a user by ID.
-
-        Args:
-            user_id (int): The ID of the user to delete.
-
-        Returns:
-            User: The deleted user data.
-        """
-        db_user = await self.get_by_id(user_id)
-        await self.session.delete(db_user)
-        await self.session.commit()
-        return User.from_orm(db_user)
-
-    def _hash_password(self, password: str) -> str:
-        """
-        Hash a password.
-
-        Args:
-            password (str): The password to hash.
-
-        Returns:
-            str: The hashed password.
-        """
-        # Placeholder for actual hashing logic
-        return password
-
-# app/services/call_processing_service.py
-from .repositories.user_repository import UserRepository
-from ..models.user_model import UserCreate, UserUpdate, User
-
-class CallProcessingService:
-    def __init__(self, user_repo: UserRepository):
-        """
-        Initialize the call processing service.
-
-        Args:
-            user_repo (UserRepository): The user repository.
-        """
-        self.user_repo = user_repo
-
-    async def create(self, user: UserCreate) -> User:
-        """
-        Create a new user.
-
-        Args:
-            user (UserCreate): The user data to be created.
-
-        Returns:
-            User: The created user data.
-        """
-        return await self.user_repo.create(user)
-
-    async def get_by_id(self, user_id: int) -> User:
-        """
-        Retrieve a user by ID.
-
-        Args:
-            user_id (int): The ID of the user to retrieve.
-
-        Returns:
-            User: The retrieved user data.
-        """
-        return await self.user_repo.get_by_id(user_id)
-
-    async def update(self, user_id: int, user_update: UserUpdate) -> User:
-        """
-        Update an existing user.
-
-        Args:
-            user_id (int): The ID of the user to update.
-            user_update (UserUpdate): The data to update the user with.
-
-        Returns:
-            User: The updated user data.
-        """
-        return await self.user_repo.update(user_id, user_update)
-
-    async def delete(self, user_id: int) -> User:
-        """
-        Delete a user by ID.
-
-        Args:
-            user_id (int): The ID of the user to delete.
-
-        Returns:
-            User: The deleted user data.
-        """
-        return await self.user_repo.delete(user_id)
+def test_delete_user():
+    user_id = 1
+    response = client.delete(f"/users/{user_id}")
+    assert response.status_code == 200
+    assert response.json()["id"] == user_id
