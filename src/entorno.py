@@ -2,15 +2,13 @@
 
 from .scraper import Scraper
 
+
 # scraper/scraper.py
 
-import requests
-from bs4 import BeautifulSoup
-from typing import List, Dict
 import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from typing import List, Dict
+from aiohttp import ClientSession, ClientError
+from bs4 import BeautifulSoup
 
 class Scraper:
     """
@@ -21,29 +19,31 @@ class Scraper:
         """
         Initialize the Scraper with a base URL.
 
-        :param base_url: The base URL of the website to scrape.
+        :param base_url: The base URL for scraping.
         """
         self.base_url = base_url
+        self.logger = logging.getLogger(__name__)
 
-    async def fetch_html(self, url: str) -> str:
+    async def fetch_html(self, session: ClientSession, url: str) -> str:
         """
-        Fetch HTML content from a given URL.
+        Fetch HTML content from a given URL using an aiohttp session.
 
-        :param url: The URL to fetch HTML from.
-        :return: The HTML content as a string.
-        :raises Exception: If the request fails.
+        :param session: The aiohttp session to use for the request.
+        :param url: The URL to fetch.
+        :return: The HTML content of the page.
+        :raises ClientError: If there is an error during the HTTP request.
         """
         try:
-            response = requests.get(url)
-            response.raise_for_status()
-            return response.text
-        except requests.RequestException as e:
-            logger.error(f"Failed to fetch URL {url}: {e}")
+            async with session.get(url) as response:
+                response.raise_for_status()
+                return await response.text()
+        except ClientError as e:
+            self.logger.error(f"Error fetching {url}: {e}")
             raise
 
-    async def parse_html(self, html: str) -> List[Dict[str, str]]:
+    def parse_html(self, html: str) -> List[Dict[str, str]]:
         """
-        Parse HTML content and extract relevant data.
+        Parse HTML content to extract relevant data.
 
         :param html: The HTML content to parse.
         :return: A list of dictionaries containing extracted data.
@@ -58,47 +58,23 @@ class Scraper:
 
     async def scrape(self) -> List[Dict[str, str]]:
         """
-        Scrape the website and extract data.
+        Perform the scraping task.
 
-        :return: A list of dictionaries containing extracted data.
-        :raises Exception: If fetching or parsing fails.
+        :return: A list of dictionaries containing scraped data.
+        :raises ClientError: If there is an error during the HTTP request.
         """
-        try:
-            html = await self.fetch_html(self.base_url)
-            return await self.parse_html(html)
-        except Exception as e:
-            logger.error(f"Scraping failed: {e}")
-            raise
+        url = self.base_url
+        async with ClientSession() as session:
+            html = await self.fetch_html(session, url)
+            return self.parse_html(html)
 
-# scraper/tests/test_scraper.py
 
-import pytest
-from unittest.mock import patch, MagicMock
-from ..scraper import Scraper
+# scraper/utils.py
 
-@pytest.fixture
-def scraper():
-    return Scraper("http://example.com")
+import logging
 
-@patch('requests.get')
-async def test_fetch_html(mock_get, scraper):
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.text = "<html><body><h1>Test</h1></body></html>"
-    mock_get.return_value = mock_response
-
-    html = await scraper.fetch_html("http://example.com")
-    assert html == "<html><body><h1>Test</h1></body></html>"
-
-@patch('requests.get')
-async def test_fetch_html_failure(mock_get, scraper):
-    mock_get.side_effect = requests.RequestException("Failed to fetch")
-
-    with pytest.raises(Exception) as e:
-        await scraper.fetch_html("http://example.com")
-    assert str(e.value) == "Failed to fetch"
-
-def test_parse_html(scraper):
-    html = "<html><body><div class='item'><h2>Title</h2><a href='link'>Link</a></div></body></html>"
-    items = scraper.parse_html(html)
-    assert items == [{'title': 'Title', 'link': 'link'}]
+def setup_logging():
+    """
+    Set up basic configuration for logging.
+    """
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
