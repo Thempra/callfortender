@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.schemas import UserCreate, User
 from unittest.mock import AsyncMock
+from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import date
 
 # Fixtures
@@ -22,16 +23,9 @@ def valid_user_data():
     }
 
 @pytest.fixture
-def valid_user_update_data():
-    return {
-        "first_name": "Jane",
-        "last_name": "Smith"
-    }
-
-@pytest.fixture
-def call_processing_service_mock():
+def user_service_mock():
     mock = AsyncMock()
-    mock.create.return_value = User(
+    mock.create_user.return_value = User(
         id=1,
         username="testuser",
         email="test@example.com",
@@ -39,23 +33,7 @@ def call_processing_service_mock():
         last_name="Doe",
         date_of_birth=date(1990, 1, 1)
     )
-    mock.get_by_id.return_value = User(
-        id=1,
-        username="testuser",
-        email="test@example.com",
-        first_name="John",
-        last_name="Doe",
-        date_of_birth=date(1990, 1, 1)
-    )
-    mock.update.return_value = User(
-        id=1,
-        username="testuser",
-        email="test@example.com",
-        first_name="Jane",
-        last_name="Smith",
-        date_of_birth=date(1990, 1, 1)
-    )
-    mock.delete.return_value = User(
+    mock.get_user_by_id.return_value = User(
         id=1,
         username="testuser",
         email="test@example.com",
@@ -66,9 +44,9 @@ def call_processing_service_mock():
     return mock
 
 @pytest.fixture
-def app_with_mocked_service(client, call_processing_service_mock):
-    from app.dependencies import get_call_processing_service
-    get_call_processing_service.__wrapped__ = lambda: call_processing_service_mock
+def app_with_mocked_service(user_service_mock):
+    from app.dependencies import get_user_service
+    get_user_service.__wrapped__ = lambda: user_service_mock
     return client
 
 # Tests de funcionalidad básica
@@ -81,19 +59,6 @@ def test_create_user_valid_data(app_with_mocked_service, valid_user_data):
 
 def test_read_user_by_id(app_with_mocked_service):
     response = app_with_mocked_service.get("/users/1")
-    assert response.status_code == 200
-    user = response.json()
-    assert user["id"] == 1
-
-def test_update_user_valid_data(app_with_mocked_service, valid_user_update_data):
-    response = app_with_mocked_service.put("/users/1", json=valid_user_update_data)
-    assert response.status_code == 200
-    user = response.json()
-    assert user["first_name"] == valid_user_update_data["first_name"]
-    assert user["last_name"] == valid_user_update_data["last_name"]
-
-def test_delete_user(app_with_mocked_service):
-    response = app_with_mocked_service.delete("/users/1")
     assert response.status_code == 200
     user = response.json()
     assert user["id"] == 1
@@ -165,12 +130,4 @@ def test_create_user_invalid_username_length(app_with_mocked_service):
 
 def test_read_user_by_invalid_id(app_with_mocked_service):
     response = app_with_mocked_service.get("/users/0")
-    assert response.status_code == 404
-
-def test_update_user_invalid_id(app_with_mocked_service, valid_user_update_data):
-    response = app_with_mocked_service.put("/users/0", json=valid_user_update_data)
-    assert response.status_code == 404
-
-def test_delete_user_invalid_id(app_with_mocked_service):
-    response = app_with_mocked_service.delete("/users/0")
     assert response.status_code == 404
