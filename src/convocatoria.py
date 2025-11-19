@@ -1,15 +1,15 @@
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
-from typing import List
+from typing import Optional, List
 from datetime import date
 
 app = FastAPI()
 
-# Pydantic models
+# Pydantic models for Convocatoria
 class ConvocatoriaBase(BaseModel):
-    titulo: str = Field(..., min_length=3, max_length=100)
-    descripcion: str = Field(..., min_length=10)
+    titulo: str = Field(..., min_length=3, max_length=255)
+    descripcion: str
     fecha_inicio: date
     fecha_fin: date
 
@@ -17,10 +17,7 @@ class ConvocatoriaCreate(ConvocatoriaBase):
     pass
 
 class ConvocatoriaUpdate(ConvocatoriaBase):
-    titulo: Optional[str] = None
-    descripcion: Optional[str] = None
-    fecha_inicio: Optional[date] = None
-    fecha_fin: Optional[date] = None
+    pass
 
 class ConvocatoriaInDBBase(ConvocatoriaBase):
     id: int
@@ -31,25 +28,34 @@ class ConvocatoriaInDBBase(ConvocatoriaBase):
 class Convocatoria(ConvocatoriaInDBBase):
     pass
 
-# SQLAlchemy models
+# SQLAlchemy models for Convocatoria
 from sqlalchemy import Column, Integer, String, Date
 from sqlalchemy.ext.declarative import declarative_base
-from app.database import AsyncSessionLocal, engine
 
 Base = declarative_base()
 
-class ConvocatoriaModel(Base):
+class ConvocatoriaInDB(Base):
     __tablename__ = "convocatorias"
 
     id = Column(Integer, primary_key=True, index=True)
-    titulo = Column(String(100), nullable=False)
+    titulo = Column(String(255), nullable=False)
     descripcion = Column(String, nullable=False)
     fecha_inicio = Column(Date, nullable=False)
     fecha_fin = Column(Date, nullable=False)
 
-Base.metadata.create_all(bind=engine)
+# Database setup
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 
-# Dependency to get the database session
+DATABASE_URL = "postgresql+asyncpg://user:password@localhost/dbname"
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
@@ -59,38 +65,38 @@ class ConvocatoriaRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, convocatoria: ConvocatoriaCreate) -> Convocatoria:
-        db_convocatoria = ConvocatoriaModel(**convocatoria.dict())
+    async def create(self, convocatoria: ConvocatoriaCreate) -> ConvocatoriaInDB:
+        db_convocatoria = ConvocatoriaInDB(**convocatoria.dict())
         self.session.add(db_convocatoria)
         await self.session.commit()
         await self.session.refresh(db_convocatoria)
-        return Convocatoria.from_orm(db_convocatoria)
+        return db_convocatoria
 
-    async def get_all(self) -> List[Convocatoria]:
-        result = await self.session.execute(select(ConvocatoriaModel))
-        return [Convocatoria.from_orm(convocatoria) for convocatoria in result.scalars().all()]
+    async def get_all(self, skip: int = 0, limit: int = 10) -> List[ConvocatoriaInDB]:
+        result = await self.session.execute(select(ConvocatoriaInDB).offset(skip).limit(limit))
+        return result.scalars().all()
 
-    async def get_by_id(self, convocatoria_id: int) -> Convocatoria:
-        result = await self.session.execute(select(ConvocatoriaModel).where(ConvocatoriaModel.id == convocatoria_id))
+    async def get_by_id(self, convocatoria_id: int) -> ConvocatoriaInDB:
+        result = await self.session.execute(select(ConvocatoriaInDB).where(ConvocatoriaInDB.id == convocatoria_id))
         db_convocatoria = result.scalar_one_or_none()
         if not db_convocatoria:
             raise ValueError(f"Convocatoria with id {convocatoria_id} not found")
-        return Convocatoria.from_orm(db_convocatoria)
+        return db_convocatoria
 
-    async def update(self, convocatoria_id: int, convocatoria_update: ConvocatoriaUpdate) -> Convocatoria:
+    async def update(self, convocatoria_id: int, convocatoria_update: ConvocatoriaUpdate) -> ConvocatoriaInDB:
         db_convocatoria = await self.get_by_id(convocatoria_id)
         for key, value in convocatoria_update.dict(exclude_unset=True).items():
             setattr(db_convocatoria, key, value)
         self.session.add(db_convocatoria)
         await self.session.commit()
         await self.session.refresh(db_convocatoria)
-        return Convocatoria.from_orm(db_convocatoria)
+        return db_convocatoria
 
-    async def delete(self, convocatoria_id: int) -> Convocatoria:
+    async def delete(self, convocatoria_id: int) -> ConvocatoriaInDB:
         db_convocatoria = await self.get_by_id(convocatoria_id)
         await self.session.delete(db_convocatoria)
         await self.session.commit()
-        return Convocatoria.from_orm(db_convocatoria)
+        return db_convocatoria
 
 # Dependency to get the convocatoria repository
 def get_convocatoria_repo(session: AsyncSession = Depends(get_db)) -> ConvocatoriaRepository:
@@ -102,26 +108,27 @@ async def create_convocatoria(convocatoria: ConvocatoriaCreate, repo: Convocator
     """
     Create a new convocatoria.
     """
-    return await repo.create(convocatoria)
+    db_convocatoria = await repo.create(convocatoria)
+    return db_convocatoria
 
-@app.get("/convocatorias/", response_model=List[Convocatoria], status_code=200)
-async def read_convocatorias(repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
+@app.get("/convocatorias/", response_model=List[Convocatoria])
+async def read_convocatorias(skip: int = 0, limit: int = 10, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
-    Get all convocatorias.
+    Retrieve a list of convocatorias.
     """
-    return await repo.get_all()
+    return await repo.get_all(skip, limit)
 
-@app.get("/convocatorias/{convocatoria_id}", response_model=Convocatoria, status_code=200)
+@app.get("/convocatorias/{convocatoria_id}", response_model=Convocatoria)
 async def read_convocatoria(convocatoria_id: int, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
-    Get a single convocatoria by ID.
+    Retrieve a single convocatoria by ID.
     """
     try:
         return await repo.get_by_id(convocatoria_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-@app.put("/convocatorias/{convocatoria_id}", response_model=Convocatoria, status_code=200)
+@app.put("/convocatorias/{convocatoria_id}", response_model=Convocatoria)
 async def update_convocatoria(convocatoria_id: int, convocatoria_update: ConvocatoriaUpdate, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
     Update a convocatoria by ID.
@@ -131,7 +138,7 @@ async def update_convocatoria(convocatoria_id: int, convocatoria_update: Convoca
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-@app.delete("/convocatorias/{convocatoria_id}", response_model=Convocatoria, status_code=200)
+@app.delete("/convocatorias/{convocatoria_id}", response_model=Convocatoria)
 async def delete_convocatoria(convocatoria_id: int, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
     Delete a convocatoria by ID.
