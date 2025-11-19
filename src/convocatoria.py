@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 from datetime import date
 
 app = FastAPI()
@@ -106,24 +106,42 @@ def get_convocatoria_repo(session: AsyncSession = Depends(get_db)) -> Convocator
 async def create_convocatoria(convocatoria: ConvocatoriaCreate, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
     Create a new convocatoria.
+    
+    Args:
+        convocatoria (ConvocatoriaCreate): The convocatoria data to create.
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        Convocatoria: The created convocatoria.
     """
-    try:
-        db_convocatoria = await repo.create(convocatoria)
-        return db_convocatoria
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await repo.create(convocatoria)
 
 @app.get("/convocatorias/", response_model=List[Convocatoria])
 async def read_convocatorias(skip: int = 0, limit: int = 10, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
-    Retrieve a list of convocatorias.
+    Get a list of convocatorias.
+
+    Args:
+        skip (int): The number of records to skip.
+        limit (int): The maximum number of records to return.
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        List[Convocatoria]: A list of convocatorias.
     """
     return await repo.get_all(skip, limit)
 
 @app.get("/convocatorias/{convocatoria_id}", response_model=Convocatoria)
 async def read_convocatoria(convocatoria_id: int, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
-    Retrieve a single convocatoria by ID.
+    Get a single convocatoria by ID.
+
+    Args:
+        convocatoria_id (int): The ID of the convocatoria to retrieve.
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        Convocatoria: The retrieved convocatoria.
     """
     try:
         return await repo.get_by_id(convocatoria_id)
@@ -133,7 +151,15 @@ async def read_convocatoria(convocatoria_id: int, repo: ConvocatoriaRepository =
 @app.put("/convocatorias/{convocatoria_id}", response_model=Convocatoria)
 async def update_convocatoria(convocatoria_id: int, convocatoria_update: ConvocatoriaUpdate, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
-    Update a convocatoria by ID.
+    Update a single convocatoria by ID.
+
+    Args:
+        convocatoria_id (int): The ID of the convocatoria to update.
+        convocatoria_update (ConvocatoriaUpdate): The data to update the convocatoria with.
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        Convocatoria: The updated convocatoria.
     """
     try:
         return await repo.update(convocatoria_id, convocatoria_update)
@@ -143,7 +169,14 @@ async def update_convocatoria(convocatoria_id: int, convocatoria_update: Convoca
 @app.delete("/convocatorias/{convocatoria_id}", response_model=Convocatoria)
 async def delete_convocatoria(convocatoria_id: int, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
-    Delete a convocatoria by ID.
+    Delete a single convocatoria by ID.
+
+    Args:
+        convocatoria_id (int): The ID of the convocatoria to delete.
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        Convocatoria: The deleted convocatoria.
     """
     try:
         return await repo.delete(convocatoria_id)
