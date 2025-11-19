@@ -111,125 +111,15 @@ class CallService:
         self.db = db
 
     async def create_call(self, call: CallCreate) -> CallOut:
-        new_call = Call(**call.dict())
-        self.db.add(new_call)
+        db_call = Call(**call.dict())
+        self.db.add(db_call)
         await self.db.commit()
-        await self.db.refresh(new_call)
-        return CallOut.from_orm(new_call)
+        await self.db.refresh(db_call)
+        return CallOut.from_orm(db_call)
 
     async def get_call(self, call_id: int) -> CallOut:
         result = await self.db.execute(select(Call).where(Call.id == call_id))
-        call = result.scalar_one_or_none()
-        if not call:
-            raise ValueError(f"Call with id {call_id} not found")
-        return CallOut.from_orm(call)
-
-
-# app/services/user_service.py
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-
-from app.models.user_model import User, UserInDB
-from app.schemas.user_schema import UserCreate, UserOut
-from app.repositories.user_repository import UserRepository
-
-class UserService:
-    def __init__(self, db: AsyncSession):
-        self.db = db
-        self.user_repo = UserRepository(db)
-
-    async def create_user(self, user: UserCreate) -> UserOut:
-        new_user = await self.user_repo.create(user)
-        return UserOut.from_orm(new_user)
-
-    async def get_user(self, user_id: int) -> UserOut:
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise ValueError(f"User with id {user_id} not found")
-        return UserOut.from_orm(user)
-
-
-# app/models/call_model.py
-from sqlalchemy import Column, Integer, ForeignKey, DateTime
-from sqlalchemy.orm import relationship
-
-from app.database import Base
-
-class Call(Base):
-    __tablename__ = "calls"
-
-    id = Column(Integer, primary_key=True, index=True)
-    caller_id = Column(Integer, ForeignKey("users.id"))
-    receiver_id = Column(Integer, ForeignKey("users.id"))
-    call_time = Column(DateTime)
-
-    caller = relationship("User", foreign_keys=[caller_id])
-    receiver = relationship("User", foreign_keys=[receiver_id])
-
-
-# app/models/user_model.py
-from sqlalchemy import Column, Integer, String, Date
-
-from app.database import Base
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    email = Column(String, unique=True, index=True)
-    first_name = Column(String)
-    last_name = Column(String)
-    date_of_birth = Column(Date)
-
-
-class UserInDB(User):
-    hashed_password = Column(String)
-
-
-# app/database.py
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-
-from .config import settings
-
-DATABASE_URL = f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
-
-engine = create_async_engine(DATABASE_URL, echo=True)
-AsyncSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
-
-async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
-# app/config.py
-from pydantic import BaseSettings
-
-class Settings(BaseSettings):
-    database_hostname: str
-    database_port: str
-    database_password: str
-    database_name: str
-    database_username: str
-
-    class Config:
-        env_file = ".env"
-
-settings = Settings()
-
-
-# .env
-database_hostname=localhost
-database_port=5432
-database_password=mysecretpassword
-database_name=mydatabase
-database_username=myuser
-
-
-# app/__init__.py
-# Source package initialization
+        db_call = result.scalars().first()
+        if not db_call:
+            raise HTTPException(status_code=404, detail="Call not found")
+        return CallOut.from_orm(db_call)
