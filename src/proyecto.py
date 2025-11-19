@@ -112,7 +112,7 @@ from ..models.user_model import UserCreate, UserUpdate, User
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
         """
-        Initialize the CallProcessingService with a UserRepository.
+        Initialize the call processing service.
 
         Args:
             user_repo (UserRepository): The repository for user operations.
@@ -184,18 +184,17 @@ class CallProcessingService:
 
 # app/repositories/user_repository.py
 
-from sqlalchemy import select
-from typing import List
-from ..models.user_model import UserCreate, UserUpdate, UserInDB, User
+from sqlalchemy.ext.asyncio import AsyncSession
+from ..models.user_model import UserInDB, UserCreate, UserUpdate, User
 from .base_repository import BaseRepository
 
 class UserRepository(BaseRepository):
-    def __init__(self, session):
+    def __init__(self, session: AsyncSession):
         """
-        Initialize the UserRepository with a database session.
+        Initialize the user repository.
 
         Args:
-            session: The database session.
+            session (AsyncSession): The database session.
         """
         super().__init__(session)
 
@@ -209,7 +208,14 @@ class UserRepository(BaseRepository):
         Returns:
             User: The created user data.
         """
-        db_user = UserInDB(**user.dict(), hashed_password=self._hash_password(user.password))
+        db_user = UserInDB(
+            username=user.username,
+            email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            date_of_birth=user.date_of_birth,
+            hashed_password=self._hash_password(user.password)
+        )
         self.session.add(db_user)
         await self.session.commit()
         await self.session.refresh(db_user)
@@ -300,7 +306,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 class BaseRepository:
     def __init__(self, session: AsyncSession):
         """
-        Initialize the BaseRepository with a database session.
+        Initialize the base repository.
 
         Args:
             session (AsyncSession): The database session.
@@ -382,7 +388,7 @@ def get_call_processing_service(user_repo: UserRepository = Depends(get_user_rep
     Dependency to get the call processing service.
 
     Args:
-        user_repo (UserRepository): The repository for user operations.
+        user_repo (UserRepository): The user repository.
 
     Returns:
         CallProcessingService: The call processing service.
