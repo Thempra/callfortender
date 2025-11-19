@@ -12,11 +12,10 @@ class ConvocationBase(BaseModel):
     """
     Base model for convocation information.
     """
-    title: str = Field(..., min_length=3, max_length=255)
-    description: str
+    title: str = Field(..., min_length=5, max_length=200)
+    description: str = Field(..., min_length=10)
     start_date: date
     end_date: date
-    location: Optional[str] = None
 
 class ConvocationCreate(ConvocationBase):
     """
@@ -76,8 +75,7 @@ class ConvocationRepository(BaseRepository):
             title=convocation.title,
             description=convocation.description,
             start_date=convocation.start_date,
-            end_date=convocation.end_date,
-            location=convocation.location
+            end_date=convocation.end_date
         )
         self.session.add(db_convocation)
         await self.session.commit()
@@ -156,14 +154,14 @@ from ..models.convocation_model import ConvocationCreate, ConvocationUpdate, Con
 from typing import List
 
 class ConvocationService:
-    def __init__(self, convocation_repo: ConvocationRepository):
+    def __init__(self, repository: ConvocationRepository):
         """
         Initialize the convocation service.
 
         Args:
-            convocation_repo (ConvocationRepository): The convocation repository.
+            repository (ConvocationRepository): The convocation repository.
         """
-        self.convocation_repo = convocation_repo
+        self.repository = repository
 
     async def create_convocation(self, convocation: ConvocationCreate) -> Convocation:
         """
@@ -175,9 +173,9 @@ class ConvocationService:
         Returns:
             Convocation: The created convocation data.
         """
-        return await self.convocation_repo.create(convocation)
+        return await self.repository.create(convocation)
 
-    async def get_all_convoctions(self, skip: int = 0, limit: int = 10) -> List[Convocation]:
+    async def get_all_convocations(self, skip: int = 0, limit: int = 10) -> List[Convocation]:
         """
         Retrieve a list of convocations.
 
@@ -188,7 +186,7 @@ class ConvocationService:
         Returns:
             List[Convocation]: A list of convocation data.
         """
-        return await self.convocation_repo.get_all(skip, limit)
+        return await self.repository.get_all(skip, limit)
 
     async def get_convocation_by_id(self, convocation_id: int) -> Convocation:
         """
@@ -200,7 +198,7 @@ class ConvocationService:
         Returns:
             Convocation: The retrieved convocation data.
         """
-        return await self.convocation_repo.get_by_id(convocation_id)
+        return await self.repository.get_by_id(convocation_id)
 
     async def update_convocation(self, convocation_id: int, convocation_update: ConvocationUpdate) -> Convocation:
         """
@@ -213,7 +211,7 @@ class ConvocationService:
         Returns:
             Convocation: The updated convocation data.
         """
-        return await self.convocation_repo.update(convocation_id, convocation_update)
+        return await self.repository.update(convocation_id, convocation_update)
 
     async def delete_convocation(self, convocation_id: int) -> Convocation:
         """
@@ -225,7 +223,7 @@ class ConvocationService:
         Returns:
             Convocation: The deleted convocation data.
         """
-        return await self.convocation_repo.delete(convocation_id)
+        return await self.repository.delete(convocation_id)
 
 
 # app/dependencies.py
@@ -248,17 +246,17 @@ def get_convocation_repo(session: AsyncSession = Depends(get_db)) -> Convocation
     """
     return ConvocationRepository(session)
 
-def get_convocation_service(convocation_repo: ConvocationRepository = Depends(get_convocation_repo)) -> ConvocationService:
+def get_convocation_service(repo: ConvocationRepository = Depends(get_convocation_repo)) -> ConvocationService:
     """
     Dependency to get the convocation service.
 
     Args:
-        convocation_repo (ConvocationRepository): The convocation repository.
+        repo (ConvocationRepository): The convocation repository.
 
     Returns:
         ConvocationService: The convocation service.
     """
-    return ConvocationService(convocation_repo)
+    return ConvocationService(repo)
 
 
 # app/routers/convocation_router.py
@@ -268,7 +266,7 @@ from ..models.convocation_model import ConvocationCreate, ConvocationUpdate, Con
 from ..services.convocation_service import ConvocationService
 from typing import List
 
-router = APIRouter(prefix="/convocations", tags=["Convocations"])
+router = APIRouter(prefix="/convocations", tags=["convocations"])
 
 @router.post("/", response_model=Convocation)
 async def create_convocation(convocation: ConvocationCreate, service: ConvocationService = Depends(get_convocation_service)):
@@ -285,7 +283,7 @@ async def create_convocation(convocation: ConvocationCreate, service: Convocatio
     return await service.create_convocation(convocation)
 
 @router.get("/", response_model=List[Convocation])
-async def get_all_convoctions(skip: int = 0, limit: int = 10, service: ConvocationService = Depends(get_convocation_service)):
+async def get_all_convocations(skip: int = 0, limit: int = 10, service: ConvocationService = Depends(get_convocation_service)):
     """
     Retrieve a list of convocations.
 
@@ -297,7 +295,7 @@ async def get_all_convoctions(skip: int = 0, limit: int = 10, service: Convocati
     Returns:
         List[Convocation]: A list of convocation data.
     """
-    return await service.get_all_convoctions(skip, limit)
+    return await service.get_all_convocations(skip, limit)
 
 @router.get("/{convocation_id}", response_model=Convocation)
 async def get_convocation_by_id(convocation_id: int, service: ConvocationService = Depends(get_convocation_service)):
