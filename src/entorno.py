@@ -1,80 +1,350 @@
-# app/main.py
-from fastapi import FastAPI
-from .routers import call_router, user_router
+# app/models/call_model.py
 
-app = FastAPI()
+from typing import Optional
+from pydantic import BaseModel, Field
+from datetime import datetime
 
-app.include_router(call_router.router, prefix="/calls", tags=["Calls"])
-app.include_router(user_router.router, prefix="/users", tags=["Users"])
+
+class CallBase(BaseModel):
+    """
+    Base model for call information.
+    """
+    caller_id: int = Field(..., description="ID of the caller")
+    receiver_id: int = Field(..., description="ID of the receiver")
+    duration: Optional[float] = Field(None, description="Duration of the call in seconds")
+
+
+class CallCreate(CallBase):
+    """
+    Model for creating a new call.
+    """
+
+
+class CallUpdate(CallBase):
+    """
+    Model for updating an existing call.
+    """
+
+
+class CallInDBBase(CallBase):
+    """
+    Base model for call information stored in the database.
+    """
+    id: int
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class Call(CallInDBBase):
+    """
+    Model for call information returned to the client.
+    """
+
+
+# app/repositories/call_repository.py
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from ..models.call_model import CallInDB, CallCreate, CallUpdate
+from .base_repository import BaseRepository
+from sqlalchemy.future import select
+
+
+class CallRepository(BaseRepository):
+    def __init__(self, session: AsyncSession):
+        """
+        Initialize the call repository.
+
+        Args:
+            session (AsyncSession): The database session.
+        """
+        super().__init__(session)
+
+    async def create(self, call: CallCreate) -> CallInDB:
+        """
+        Create a new call.
+
+        Args:
+            call (CallCreate): The call data to be created.
+
+        Returns:
+            CallInDB: The created call data.
+        """
+        db_call = CallInDB(
+            caller_id=call.caller_id,
+            receiver_id=call.receiver_id,
+            duration=call.duration,
+            created_at=datetime.utcnow()
+        )
+        self.session.add(db_call)
+        await self.session.commit()
+        await self.session.refresh(db_call)
+        return db_call
+
+    async def get_all(self, skip: int = 0, limit: int = 10) -> list[CallInDB]:
+        """
+        Retrieve a list of calls.
+
+        Args:
+            skip (int): Number of records to skip.
+            limit (int): Maximum number of records to return.
+
+        Returns:
+            List[CallInDB]: A list of call data.
+        """
+        result = await self.session.execute(select(CallInDB).offset(skip).limit(limit))
+        return result.scalars().all()
+
+    async def get_by_id(self, call_id: int) -> CallInDB:
+        """
+        Retrieve a call by ID.
+
+        Args:
+            call_id (int): The ID of the call to retrieve.
+
+        Returns:
+            CallInDB: The retrieved call data.
+        """
+        result = await self.session.execute(select(CallInDB).where(CallInDB.id == call_id))
+        db_call = result.scalar_one_or_none()
+        if not db_call:
+            raise ValueError(f"Call with id {call_id} not found")
+        return db_call
+
+    async def update(self, call_id: int, call_update: CallUpdate) -> CallInDB:
+        """
+        Update an existing call.
+
+        Args:
+            call_id (int): The ID of the call to update.
+            call_update (CallUpdate): The data to update the call with.
+
+        Returns:
+            CallInDB: The updated call data.
+        """
+        db_call = await self.get_by_id(call_id)
+        for key, value in call_update.dict(exclude_unset=True).items():
+            setattr(db_call, key, value)
+        self.session.add(db_call)
+        await self.session.commit()
+        await self.session.refresh(db_call)
+        return db_call
+
+    async def delete(self, call_id: int) -> CallInDB:
+        """
+        Delete a call by ID.
+
+        Args:
+            call_id (int): The ID of the call to delete.
+
+        Returns:
+            CallInDB: The deleted call data.
+        """
+        db_call = await self.get_by_id(call_id)
+        await self.session.delete(db_call)
+        await self.session.commit()
+        return db_call
+
+
+# app/services/call_service.py
+
+from typing import List
+from ..models.call_model import CallCreate, CallUpdate, Call
+from ..repositories.call_repository import CallRepository
+
+
+class CallService:
+    def __init__(self, call_repo: CallRepository):
+        """
+        Initialize the call service.
+
+        Args:
+            call_repo (CallRepository): The call repository.
+        """
+        self.call_repo = call_repo
+
+    async def create_call(self, call: CallCreate) -> Call:
+        """
+        Create a new call.
+
+        Args:
+            call (CallCreate): The call data to be created.
+
+        Returns:
+            Call: The created call data.
+        """
+        return await self.call_repo.create(call)
+
+    async def get_all_calls(self, skip: int = 0, limit: int = 10) -> List[Call]:
+        """
+        Retrieve a list of calls.
+
+        Args:
+            skip (int): Number of records to skip.
+            limit (int): Maximum number of records to return.
+
+        Returns:
+            List[Call]: A list of call data.
+        """
+        return await self.call_repo.get_all(skip, limit)
+
+    async def get_call_by_id(self, call_id: int) -> Call:
+        """
+        Retrieve a call by ID.
+
+        Args:
+            call_id (int): The ID of the call to retrieve.
+
+        Returns:
+            Call: The retrieved call data.
+        """
+        return await self.call_repo.get_by_id(call_id)
+
+    async def update_call(self, call_id: int, call_update: CallUpdate) -> Call:
+        """
+        Update an existing call.
+
+        Args:
+            call_id (int): The ID of the call to update.
+            call_update (CallUpdate): The data to update the call with.
+
+        Returns:
+            Call: The updated call data.
+        """
+        return await self.call_repo.update(call_id, call_update)
+
+    async def delete_call(self, call_id: int) -> Call:
+        """
+        Delete a call by ID.
+
+        Args:
+            call_id (int): The ID of the call to delete.
+
+        Returns:
+            Call: The deleted call data.
+        """
+        return await self.call_repo.delete(call_id)
 
 
 # app/routers/call_router.py
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..schemas.call_schema import CallCreate, CallUpdate, CallResponse
+from fastapi import APIRouter, Depends
+from ..models.call_model import CallCreate, CallUpdate, Call
 from ..services.call_service import CallService
-from ..dependencies import get_call_repo
+from ..dependencies import get_call_processing_service
 
-router = APIRouter()
 
-@router.post("/", response_model=CallResponse)
-async def create_call(call: CallCreate, call_service: CallService = Depends(get_call_repo)):
+router = APIRouter(prefix="/calls", tags=["calls"])
+
+
+@router.post("/", response_model=Call)
+async def create_call(call: CallCreate, call_service: CallService = Depends(get_call_processing_service)):
+    """
+    Create a new call.
+
+    Args:
+        call (CallCreate): The call data to be created.
+        call_service (CallService): The call service.
+
+    Returns:
+        Call: The created call data.
+    """
     return await call_service.create_call(call)
 
-@router.get("/{call_id}", response_model=CallResponse)
-async def read_call(call_id: int, call_service: CallService = Depends(get_call_repo)):
-    call = await call_service.get_call_by_id(call_id)
-    if not call:
-        raise HTTPException(status_code=404, detail="Call not found")
-    return call
 
-@router.put("/{call_id}", response_model=CallResponse)
-async def update_call(call_id: int, call_update: CallUpdate, call_service: CallService = Depends(get_call_repo)):
-    updated_call = await call_service.update_call(call_id, call_update)
-    if not updated_call:
-        raise HTTPException(status_code=404, detail="Call not found")
-    return updated_call
+@router.get("/", response_model=list[Call])
+async def get_all_calls(skip: int = 0, limit: int = 10, call_service: CallService = Depends(get_call_processing_service)):
+    """
+    Retrieve a list of calls.
 
-@router.delete("/{call_id}", response_model=CallResponse)
-async def delete_call(call_id: int, call_service: CallService = Depends(get_call_repo)):
-    deleted_call = await call_service.delete_call(call_id)
-    if not deleted_call:
-        raise HTTPException(status_code=404, detail="Call not found")
-    return deleted_call
+    Args:
+        skip (int): Number of records to skip.
+        limit (int): Maximum number of records to return.
+        call_service (CallService): The call service.
+
+    Returns:
+        List[Call]: A list of call data.
+    """
+    return await call_service.get_all_calls(skip, limit)
 
 
-# app/routers/user_router.py
-from fastapi import APIRouter, Depends, HTTPException
+@router.get("/{call_id}", response_model=Call)
+async def get_call_by_id(call_id: int, call_service: CallService = Depends(get_call_processing_service)):
+    """
+    Retrieve a call by ID.
+
+    Args:
+        call_id (int): The ID of the call to retrieve.
+        call_service (CallService): The call service.
+
+    Returns:
+        Call: The retrieved call data.
+    """
+    return await call_service.get_call_by_id(call_id)
+
+
+@router.put("/{call_id}", response_model=Call)
+async def update_call(call_id: int, call_update: CallUpdate, call_service: CallService = Depends(get_call_processing_service)):
+    """
+    Update an existing call.
+
+    Args:
+        call_id (int): The ID of the call to update.
+        call_update (CallUpdate): The data to update the call with.
+        call_service (CallService): The call service.
+
+    Returns:
+        Call: The updated call data.
+    """
+    return await call_service.update_call(call_id, call_update)
+
+
+@router.delete("/{call_id}", response_model=Call)
+async def delete_call(call_id: int, call_service: CallService = Depends(get_call_processing_service)):
+    """
+    Delete a call by ID.
+
+    Args:
+        call_id (int): The ID of the call to delete.
+        call_service (CallService): The call service.
+
+    Returns:
+        Call: The deleted call data.
+    """
+    return await call_service.delete_call(call_id)
+
+
+# app/dependencies.py
+
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from ..database import get_db
+from .repositories.call_repository import CallRepository
+from .services.call_service import CallService
 
-from ..schemas.user_schema import UserCreate, UserUpdate, UserResponse
-from ..services.user_service import UserService
-from ..dependencies import get_user_repo
 
-router = APIRouter()
+def get_call_repo(session: AsyncSession = Depends(get_db)) -> CallRepository:
+    """
+    Dependency to get the call repository.
 
-@router.post("/", response_model=UserResponse)
-async def create_user(user: UserCreate, user_service: UserService = Depends(get_user_repo)):
-    return await user_service.create_user(user)
+    Args:
+        session (AsyncSession): The database session.
 
-@router.get("/{user_id}", response_model=UserResponse)
-async def read_user(user_id: int, user_service: UserService = Depends(get_user_repo)):
-    user = await user_service.get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+    Returns:
+        CallRepository: The call repository.
+    """
+    return CallRepository(session)
 
-@router.put("/{user_id}", response_model=UserResponse)
-async def update_user(user_id: int, user_update: UserUpdate, user_service: UserService = Depends(get_user_repo)):
-    updated_user = await user_service.update_user(user_id, user_update)
-    if not updated_user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return updated_user
 
-@router.delete("/{user_id}", response_model=UserResponse)
-async def delete_user(user_id: int, user_service: UserService = Depends(get_user_repo)):
-    deleted_user = await user_service.delete_user(user_id)
-    if not deleted_user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return deleted_user
+def get_call_processing_service(call_repo: CallRepository = Depends(get_call_repo)) -> CallService:
+    """
+    Dependency to get the call processing service.
+
+    Args:
+        call_repo (CallRepository): The call repository.
+
+    Returns:
+        CallService: The call service.
+    """
+    return CallService(call_repo)
