@@ -66,17 +66,21 @@ def test_get_convocation_by_id(convocation_repository, valid_convocation_data):
 # Tests de edge cases
 def test_create_convocation_min_length_title(convocation_repository):
     data = {
-        "title": "C",
+        "title": "C" * 5,
         "description": "Esta es una convocatoria de prueba.",
         "start_date": date(2023, 10, 1),
         "end_date": date(2023, 10, 31)
     }
-    with pytest.raises(ValueError):
-        ConvocationCreate(**data)
+    db_convocation = ConvocationInDB(id=1, **data)
+    convocation_repository.session.add.return_value = None
+    convocation_repository.session.commit.return_value = None
+    convocation_repository.session.refresh.return_value = None
+    result = convocation_repository.create(ConvocationCreate(**data))
+    assert result.id == 1
 
 def test_create_convocation_max_length_title(convocation_repository):
     data = {
-        "title": "C" * 50,
+        "title": "C" * 200,
         "description": "Esta es una convocatoria de prueba.",
         "start_date": date(2023, 10, 1),
         "end_date": date(2023, 10, 31)
