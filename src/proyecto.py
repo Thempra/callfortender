@@ -66,7 +66,7 @@ async def get_user(user_id: int, call_service: CallProcessingService = Depends(g
 @router.put("/users/{user_id}", response_model=User)
 async def update_user(user_id: int, user_update: UserUpdate, call_service: CallProcessingService = Depends(get_call_processing_service)):
     """
-    Update a user by ID.
+    Update an existing user.
 
     Args:
         user_id (int): The ID of the user to update.
@@ -112,7 +112,7 @@ from ..models.user_model import UserCreate, UserUpdate, User
 class CallProcessingService:
     def __init__(self, user_repo: UserRepository):
         """
-        Initialize the call processing service.
+        Initialize the CallProcessingService with a UserRepository.
 
         Args:
             user_repo (UserRepository): The repository for user operations.
@@ -158,7 +158,7 @@ class CallProcessingService:
 
     async def update_user(self, user_id: int, user_update: UserUpdate) -> User:
         """
-        Update a user by ID.
+        Update an existing user.
 
         Args:
             user_id (int): The ID of the user to update.
@@ -184,19 +184,20 @@ class CallProcessingService:
 
 # app/repositories/user_repository.py
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserInDB, User
+from sqlalchemy import select
 from typing import List
+from ..models.user_model import UserCreate, UserUpdate, UserInDB, User
+from .base_repository import BaseRepository
 
-class UserRepository:
-    def __init__(self, session: AsyncSession):
+class UserRepository(BaseRepository):
+    def __init__(self, session):
         """
-        Initialize the user repository.
+        Initialize the UserRepository with a database session.
 
         Args:
-            session (AsyncSession): The database session.
+            session: The database session.
         """
-        self.session = session
+        super().__init__(session)
 
     async def create(self, user: UserCreate) -> User:
         """
@@ -246,7 +247,7 @@ class UserRepository:
 
     async def update(self, user_id: int, user_update: UserUpdate) -> User:
         """
-        Update a user by ID.
+        Update an existing user.
 
         Args:
             user_id (int): The ID of the user to update.
@@ -290,6 +291,21 @@ class UserRepository:
         """
         # Placeholder for actual hashing logic
         return password
+
+
+# app/repositories/base_repository.py
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+class BaseRepository:
+    def __init__(self, session: AsyncSession):
+        """
+        Initialize the BaseRepository with a database session.
+
+        Args:
+            session (AsyncSession): The database session.
+        """
+        self.session = session
 
 
 # app/models/user_model.py
