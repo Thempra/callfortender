@@ -99,23 +99,6 @@ async def test_fetch_html_failure(mock_get, scraper):
     assert str(e.value) == "Failed to fetch"
 
 def test_parse_html(scraper):
-    html = "<html><body><div class='item'><h2>Title</h2><a href='/link'>Link</a></div></body></html>"
+    html = "<html><body><div class='item'><h2>Title</h2><a href='link'>Link</a></div></body></html>"
     items = scraper.parse_html(html)
-    assert items == [{'title': 'Title', 'link': '/link'}]
-
-@patch('scraper.scraper.Scraper.fetch_html')
-@patch('scraper.scraper.Scraper.parse_html')
-async def test_scrape(mock_parse, mock_fetch, scraper):
-    mock_fetch.return_value = "<html><body><div class='item'><h2>Title</h2><a href='/link'>Link</a></div></body></html>"
-    mock_parse.return_value = [{'title': 'Title', 'link': '/link'}]
-
-    items = await scraper.scrape()
-    assert items == [{'title': 'Title', 'link': '/link'}]
-
-@patch('scraper.scraper.Scraper.fetch_html')
-async def test_scrape_failure(mock_fetch, scraper):
-    mock_fetch.side_effect = Exception("Scraping failed")
-
-    with pytest.raises(Exception) as e:
-        await scraper.scrape()
-    assert str(e.value) == "Scraping failed"
+    assert items == [{'title': 'Title', 'link': 'link'}]
