@@ -1,115 +1,118 @@
-# app/call/__init__.py
+# setup.py
+from setuptools import find_packages, setup
 
-from .call_service import CallService
-from .call_repository import CallRepository
+setup(
+    name="fastapi_environment",
+    version="0.1.0",
+    packages=find_packages(),
+    install_requires=[
+        "fastapi>=0.78.0",
+        "uvicorn[standard]>=0.20.0",
+        "sqlalchemy>=1.4.39",
+        "asyncpg>=0.26.0",
+        "pydantic[email]>=1.10.5",
+        "pytest>=7.1.2",
+        "coverage>=6.4.1",
+        "redis>=4.2.5",
+        "python-dotenv>=0.20.0"
+    ],
+    extras_require={
+        "dev": [
+            "black>=22.3.0",
+            "flake8>=4.0.1",
+            "mypy>=0.961"
+        ]
+    }
+)
 
+# app/__init__.py
+from fastapi import FastAPI
 
-# app/call/call_model.py
+app = FastAPI()
 
-from typing import Optional
-from pydantic import BaseModel, Field
-from datetime import datetime
+@app.get("/")
+async def read_root():
+    return {"message": "Hello World"}
 
-class CallBase(BaseModel):
-    """
-    Base model for call information.
-    """
-    caller_id: int = Field(..., description="ID of the caller")
-    receiver_id: int = Field(..., description="ID of the receiver")
-    call_start_time: datetime = Field(..., description="Start time of the call")
+# app/main.py
+import uvicorn
+from . import app
 
-class CallCreate(CallBase):
-    """
-    Model for creating a new call.
-    """
+if __name__ == "__main__":
+    uvicorn.run(app.app, host="0.0.0.0", port=8000)
 
-class CallUpdate(BaseModel):
-    """
-    Model for updating an existing call.
-    """
-    call_end_time: Optional[datetime] = Field(None, description="End time of the call")
+# app/config/__init__.py
+from pydantic import BaseSettings
 
-class CallInDBBase(CallBase):
-    id: int
-    call_end_time: Optional[datetime]
+class Settings(BaseSettings):
+    database_hostname: str
+    database_port: str
+    database_password: str
+    database_name: str
+    database_username: str
+    redis_host: str
+    redis_port: int
 
     class Config:
-        orm_mode = True
+        env_file = ".env"
 
-class Call(CallInDBBase):
+settings = Settings()
+
+# app/database/__init__.py
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from ..config import settings
+
+DATABASE_URL = (
+    f"postgresql+asyncpg://{settings.database_username}:{settings.database_password}"
+    f"@{settings.database_hostname}:{settings.database_port}/{settings.database_name}"
+)
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
+async def get_db():
     """
-    Model for call information returned to the client.
+    Dependency to get the database session.
+
+    Yields:
+        AsyncSession: The database session.
     """
+    async with AsyncSessionLocal() as session:
+        yield session
 
-class CallInDB(CallInDBBase):
-    """
-    Model for call information stored in the database.
-    """
+# app/redis_client/__init__.py
+import redis.asyncio as redis
+from ..config import settings
 
+class RedisClient:
+    def __init__(self, host: str, port: int):
+        self.client = redis.Redis(host=host, port=port)
 
-# app/call/call_repository.py
-
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from ..models.call_model import CallInDB, CallCreate, CallUpdate, Call
-from .base_repository import BaseRepository
-
-class CallRepository(BaseRepository):
-    def __init__(self, session: AsyncSession):
+    async def set(self, key: str, value: str) -> None:
         """
-        Initialize the call repository.
+        Set a key-value pair in Redis.
 
         Args:
-            session (AsyncSession): The database session.
+            key (str): The key to set.
+            value (str): The value to store.
         """
-        super().__init__(session)
+        await self.client.set(key, value)
 
-    async def create(self, call: CallCreate) -> Call:
+    async def get(self, key: str) -> bytes:
         """
-        Create a new call.
+        Get the value of a key from Redis.
 
         Args:
-            call (CallCreate): The call data to be created.
+            key (str): The key to retrieve.
 
         Returns:
-            Call: The created call data.
+            bytes: The value associated with the key.
         """
-        db_call = CallInDB(
-            caller_id=call.caller_id,
-            receiver_id=call.receiver_id,
-            call_start_time=call.call_start_time
-        )
-        self.session.add(db_call)
-        await self.session.commit()
-        await self.session.refresh(db_call)
-        return Call.from_orm(db_call)
+        return await self.client.get(key)
 
-    async def get_all(self, skip: int = 0, limit: int = 10) -> list[Call]:
-        """
-        Retrieve a list of calls.
-
-        Args:
-            skip (int): Number of records to skip.
-            limit (int): Maximum number of records to return.
-
-        Returns:
-            List[Call]: A list of call data.
-        """
-        result = await self.session.execute(select(CallInDB).offset(skip).limit(limit))
-        return [Call.from_orm(call) for call in result.scalars().all()]
-
-    async def get_by_id(self, call_id: int) -> Call:
-        """
-        Retrieve a call by ID.
-
-        Args:
-            call_id (int): The ID of the call to retrieve.
-
-        Returns:
-            Call: The retrieved call data.
-        """
-        result = await self.session.execute(select(CallInDB).where(CallInDB.id == call_id))
-        db_call = result.scalar_one_or_none()
-        if not db_call:
-            raise ValueError("Call not found")
-        return Call.from_orm(db_call)
+redis_client = RedisClient(host=settings.redis_host, port=settings.redis_port)
