@@ -120,76 +120,26 @@ class WebScraper:
         Returns:
             List[Dict[str, str]]: A list of dictionaries containing article data.
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html, 'html.parser')
         articles = []
-        for item in soup.find_all("article"):
-            title_tag = item.find("h2")
-            content_tag = item.find("p")
-            url_tag = item.find("a", href=True)
-            if title_tag and content_tag and url_tag:
-                article = {
-                    "title": title_tag.get_text(strip=True),
-                    "content": content_tag.get_text(strip=True),
-                    "url": self.base_url + url_tag["href"]
-                }
-                articles.append(article)
+        for item in soup.find_all('article'):
+            title = item.find('h2').get_text(strip=True)
+            content = item.find('p').get_text(strip=True)
+            url = item.find('a')['href']
+            articles.append({'title': title, 'content': content, 'url': url})
         return articles
 
-    async def save_articles(self, articles: List[Dict[str, str]], db: AsyncSession):
+    async def scrape_articles(self) -> List[Article]:
         """
-        Save extracted articles to the database.
+        Scrape articles from the base URL and save them to the database.
 
-        Args:
-            articles (List[Dict[str, str]]): A list of dictionaries containing article data.
-            db (AsyncSession): The database session.
+        Returns:
+            List[Article]: A list of scraped Article objects.
         """
-        for article_data in articles:
-            article = Article(**article_data)
-            db.add(article)
-        await db.commit()
-
-    async def scrape(self):
-        """
-        Perform the scraping process.
-        """
-        try:
-            html_content = await self.fetch_html(self.base_url)
-            articles = self.parse_html(html_content)
-            async with get_db() as db:
-                await self.save_articles(articles, db)
-            logger.info("Scraping completed successfully.")
-        except Exception as e:
-            logger.error(f"An error occurred during scraping: {e}")
-
-
-# scraper/main.py
-
-import logging
-from fastapi import FastAPI
-from .scraper import WebScraper
-from .config import settings
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = FastAPI()
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Initialize the scraper on application startup.
-    """
-    logger.info("Starting up...")
-    scraper = WebScraper(settings.BASE_URL)
-    await scraper.scrape()
-    logger.info("Initial scrape completed.")
-
-@app.get("/")
-async def read_root():
-    """
-    Root endpoint to check if the application is running.
-
-    Returns:
-        dict: A message indicating that the application is running.
-    """
-    return {"message": "Scraping service is running."}
+        html = await self.fetch_html(self.base_url)
+        article_data = self.parse_html(html)
+        articles = [Article(**data) for data in article_data]
+        async with get_db() as session:
+            session.add_all(articles)
+            await session.commit()
+            return articles
