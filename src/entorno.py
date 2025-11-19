@@ -1,350 +1,195 @@
-# app/models/call_model.py
+# scraper/__init__.py
 
-from typing import Optional
-from pydantic import BaseModel, Field
-from datetime import datetime
+from .scraper import WebScraper
 
 
-class CallBase(BaseModel):
-    """
-    Base model for call information.
-    """
-    caller_id: int = Field(..., description="ID of the caller")
-    receiver_id: int = Field(..., description="ID of the receiver")
-    duration: Optional[float] = Field(None, description="Duration of the call in seconds")
+# scraper/config.py
 
+import os
+from pydantic import BaseSettings
 
-class CallCreate(CallBase):
-    """
-    Model for creating a new call.
-    """
-
-
-class CallUpdate(CallBase):
-    """
-    Model for updating an existing call.
-    """
-
-
-class CallInDBBase(CallBase):
-    """
-    Base model for call information stored in the database.
-    """
-    id: int
-    created_at: datetime
+class Settings(BaseSettings):
+    BASE_URL: str = "https://example.com"
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    POSTGRES_DB: str = "scraper_db"
+    POSTGRES_USER: str = "user"
+    POSTGRES_PASSWORD: str = "password"
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
 
     class Config:
-        orm_mode = True
+        env_file = ".env"
+
+settings = Settings()
 
 
-class Call(CallInDBBase):
+# scraper/database.py
+
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from .config import settings
+
+DATABASE_URL = (
+    f"postgresql+asyncpg://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@"
+    f"{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+)
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
+async def get_db():
     """
-    Model for call information returned to the client.
+    Dependency to get the database session.
+
+    Yields:
+        AsyncSession: The database session.
     """
+    async with AsyncSessionLocal() as session:
+        yield session
 
 
-# app/repositories/call_repository.py
+# scraper/models.py
 
+from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+class Article(Base):
+    __tablename__ = "articles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    url = Column(String(255), unique=True, nullable=False)
+
+
+# scraper/scraper.py
+
+import logging
+from typing import List, Dict
+import aiohttp
+from bs4 import BeautifulSoup
+from .config import settings
+from .database import get_db
+from .models import Article
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.call_model import CallInDB, CallCreate, CallUpdate
-from .base_repository import BaseRepository
-from sqlalchemy.future import select
 
+logger = logging.getLogger(__name__)
 
-class CallRepository(BaseRepository):
-    def __init__(self, session: AsyncSession):
+class WebScraper:
+    def __init__(self, base_url: str):
         """
-        Initialize the call repository.
+        Initialize the WebScraper with a base URL.
 
         Args:
-            session (AsyncSession): The database session.
+            base_url (str): The base URL to scrape.
         """
-        super().__init__(session)
+        self.base_url = base_url
 
-    async def create(self, call: CallCreate) -> CallInDB:
+    async def fetch_html(self, url: str) -> str:
         """
-        Create a new call.
+        Fetch HTML content from a given URL.
 
         Args:
-            call (CallCreate): The call data to be created.
+            url (str): The URL to fetch.
 
         Returns:
-            CallInDB: The created call data.
+            str: The HTML content of the page.
         """
-        db_call = CallInDB(
-            caller_id=call.caller_id,
-            receiver_id=call.receiver_id,
-            duration=call.duration,
-            created_at=datetime.utcnow()
-        )
-        self.session.add(db_call)
-        await self.session.commit()
-        await self.session.refresh(db_call)
-        return db_call
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return await response.text()
+                else:
+                    logger.error(f"Failed to fetch {url}: Status code {response.status}")
+                    raise Exception(f"Failed to fetch {url}")
 
-    async def get_all(self, skip: int = 0, limit: int = 10) -> list[CallInDB]:
+    def parse_html(self, html: str) -> List[Dict[str, str]]:
         """
-        Retrieve a list of calls.
+        Parse HTML content and extract article data.
 
         Args:
-            skip (int): Number of records to skip.
-            limit (int): Maximum number of records to return.
+            html (str): The HTML content to parse.
 
         Returns:
-            List[CallInDB]: A list of call data.
+            List[Dict[str, str]]: A list of dictionaries containing article data.
         """
-        result = await self.session.execute(select(CallInDB).offset(skip).limit(limit))
-        return result.scalars().all()
+        soup = BeautifulSoup(html, "html.parser")
+        articles = []
+        for item in soup.find_all("article"):
+            title_tag = item.find("h2")
+            content_tag = item.find("p")
+            url_tag = item.find("a", href=True)
+            if title_tag and content_tag and url_tag:
+                article = {
+                    "title": title_tag.get_text(strip=True),
+                    "content": content_tag.get_text(strip=True),
+                    "url": self.base_url + url_tag["href"]
+                }
+                articles.append(article)
+        return articles
 
-    async def get_by_id(self, call_id: int) -> CallInDB:
+    async def save_articles(self, articles: List[Dict[str, str]], db: AsyncSession):
         """
-        Retrieve a call by ID.
+        Save extracted articles to the database.
 
         Args:
-            call_id (int): The ID of the call to retrieve.
-
-        Returns:
-            CallInDB: The retrieved call data.
+            articles (List[Dict[str, str]]): A list of dictionaries containing article data.
+            db (AsyncSession): The database session.
         """
-        result = await self.session.execute(select(CallInDB).where(CallInDB.id == call_id))
-        db_call = result.scalar_one_or_none()
-        if not db_call:
-            raise ValueError(f"Call with id {call_id} not found")
-        return db_call
+        for article_data in articles:
+            article = Article(**article_data)
+            db.add(article)
+        await db.commit()
 
-    async def update(self, call_id: int, call_update: CallUpdate) -> CallInDB:
+    async def scrape(self):
         """
-        Update an existing call.
-
-        Args:
-            call_id (int): The ID of the call to update.
-            call_update (CallUpdate): The data to update the call with.
-
-        Returns:
-            CallInDB: The updated call data.
+        Perform the scraping process.
         """
-        db_call = await self.get_by_id(call_id)
-        for key, value in call_update.dict(exclude_unset=True).items():
-            setattr(db_call, key, value)
-        self.session.add(db_call)
-        await self.session.commit()
-        await self.session.refresh(db_call)
-        return db_call
-
-    async def delete(self, call_id: int) -> CallInDB:
-        """
-        Delete a call by ID.
-
-        Args:
-            call_id (int): The ID of the call to delete.
-
-        Returns:
-            CallInDB: The deleted call data.
-        """
-        db_call = await self.get_by_id(call_id)
-        await self.session.delete(db_call)
-        await self.session.commit()
-        return db_call
+        try:
+            html_content = await self.fetch_html(self.base_url)
+            articles = self.parse_html(html_content)
+            async with get_db() as db:
+                await self.save_articles(articles, db)
+            logger.info("Scraping completed successfully.")
+        except Exception as e:
+            logger.error(f"An error occurred during scraping: {e}")
 
 
-# app/services/call_service.py
+# scraper/main.py
 
-from typing import List
-from ..models.call_model import CallCreate, CallUpdate, Call
-from ..repositories.call_repository import CallRepository
+import logging
+from fastapi import FastAPI
+from .scraper import WebScraper
+from .config import settings
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-class CallService:
-    def __init__(self, call_repo: CallRepository):
-        """
-        Initialize the call service.
+app = FastAPI()
 
-        Args:
-            call_repo (CallRepository): The call repository.
-        """
-        self.call_repo = call_repo
-
-    async def create_call(self, call: CallCreate) -> Call:
-        """
-        Create a new call.
-
-        Args:
-            call (CallCreate): The call data to be created.
-
-        Returns:
-            Call: The created call data.
-        """
-        return await self.call_repo.create(call)
-
-    async def get_all_calls(self, skip: int = 0, limit: int = 10) -> List[Call]:
-        """
-        Retrieve a list of calls.
-
-        Args:
-            skip (int): Number of records to skip.
-            limit (int): Maximum number of records to return.
-
-        Returns:
-            List[Call]: A list of call data.
-        """
-        return await self.call_repo.get_all(skip, limit)
-
-    async def get_call_by_id(self, call_id: int) -> Call:
-        """
-        Retrieve a call by ID.
-
-        Args:
-            call_id (int): The ID of the call to retrieve.
-
-        Returns:
-            Call: The retrieved call data.
-        """
-        return await self.call_repo.get_by_id(call_id)
-
-    async def update_call(self, call_id: int, call_update: CallUpdate) -> Call:
-        """
-        Update an existing call.
-
-        Args:
-            call_id (int): The ID of the call to update.
-            call_update (CallUpdate): The data to update the call with.
-
-        Returns:
-            Call: The updated call data.
-        """
-        return await self.call_repo.update(call_id, call_update)
-
-    async def delete_call(self, call_id: int) -> Call:
-        """
-        Delete a call by ID.
-
-        Args:
-            call_id (int): The ID of the call to delete.
-
-        Returns:
-            Call: The deleted call data.
-        """
-        return await self.call_repo.delete(call_id)
-
-
-# app/routers/call_router.py
-
-from fastapi import APIRouter, Depends
-from ..models.call_model import CallCreate, CallUpdate, Call
-from ..services.call_service import CallService
-from ..dependencies import get_call_processing_service
-
-
-router = APIRouter(prefix="/calls", tags=["calls"])
-
-
-@router.post("/", response_model=Call)
-async def create_call(call: CallCreate, call_service: CallService = Depends(get_call_processing_service)):
+@app.on_event("startup")
+async def startup_event():
     """
-    Create a new call.
+    Initialize the scraper on application startup.
+    """
+    logger.info("Starting up...")
+    scraper = WebScraper(settings.BASE_URL)
+    await scraper.scrape()
+    logger.info("Initial scrape completed.")
 
-    Args:
-        call (CallCreate): The call data to be created.
-        call_service (CallService): The call service.
+@app.get("/")
+async def read_root():
+    """
+    Root endpoint to check if the application is running.
 
     Returns:
-        Call: The created call data.
+        dict: A message indicating that the application is running.
     """
-    return await call_service.create_call(call)
-
-
-@router.get("/", response_model=list[Call])
-async def get_all_calls(skip: int = 0, limit: int = 10, call_service: CallService = Depends(get_call_processing_service)):
-    """
-    Retrieve a list of calls.
-
-    Args:
-        skip (int): Number of records to skip.
-        limit (int): Maximum number of records to return.
-        call_service (CallService): The call service.
-
-    Returns:
-        List[Call]: A list of call data.
-    """
-    return await call_service.get_all_calls(skip, limit)
-
-
-@router.get("/{call_id}", response_model=Call)
-async def get_call_by_id(call_id: int, call_service: CallService = Depends(get_call_processing_service)):
-    """
-    Retrieve a call by ID.
-
-    Args:
-        call_id (int): The ID of the call to retrieve.
-        call_service (CallService): The call service.
-
-    Returns:
-        Call: The retrieved call data.
-    """
-    return await call_service.get_call_by_id(call_id)
-
-
-@router.put("/{call_id}", response_model=Call)
-async def update_call(call_id: int, call_update: CallUpdate, call_service: CallService = Depends(get_call_processing_service)):
-    """
-    Update an existing call.
-
-    Args:
-        call_id (int): The ID of the call to update.
-        call_update (CallUpdate): The data to update the call with.
-        call_service (CallService): The call service.
-
-    Returns:
-        Call: The updated call data.
-    """
-    return await call_service.update_call(call_id, call_update)
-
-
-@router.delete("/{call_id}", response_model=Call)
-async def delete_call(call_id: int, call_service: CallService = Depends(get_call_processing_service)):
-    """
-    Delete a call by ID.
-
-    Args:
-        call_id (int): The ID of the call to delete.
-        call_service (CallService): The call service.
-
-    Returns:
-        Call: The deleted call data.
-    """
-    return await call_service.delete_call(call_id)
-
-
-# app/dependencies.py
-
-from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from ..database import get_db
-from .repositories.call_repository import CallRepository
-from .services.call_service import CallService
-
-
-def get_call_repo(session: AsyncSession = Depends(get_db)) -> CallRepository:
-    """
-    Dependency to get the call repository.
-
-    Args:
-        session (AsyncSession): The database session.
-
-    Returns:
-        CallRepository: The call repository.
-    """
-    return CallRepository(session)
-
-
-def get_call_processing_service(call_repo: CallRepository = Depends(get_call_repo)) -> CallService:
-    """
-    Dependency to get the call processing service.
-
-    Args:
-        call_repo (CallRepository): The call repository.
-
-    Returns:
-        CallService: The call service.
-    """
-    return CallService(call_repo)
+    return {"message": "Scraping service is running."}
