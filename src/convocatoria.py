@@ -36,7 +36,7 @@ Base = declarative_base()
 
 class ConvocatoriaModel(Base):
     __tablename__ = "convocatorias"
-
+    
     id = Column(Integer, primary_key=True, index=True)
     titulo = Column(String, index=True)
     descripcion = Column(String)
@@ -106,40 +106,75 @@ def get_convocatoria_repo(session: AsyncSession = Depends(get_db)) -> Convocator
 async def create_convocatoria(convocatoria: ConvocatoriaCreate, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
     Create a new convocatoria.
+    
+    Args:
+        convocatoria (ConvocatoriaCreate): The convocatoria data to create.
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        Convocatoria: The created convocatoria.
     """
     return await repo.create(convocatoria)
 
-@app.get("/convocatorias/", response_model=List[Convocatoria])
+@app.get("/convocatorias/", response_model=List[Convocatoria], status_code=200)
 async def read_convocatorias(repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
-    Retrieve all convocatorias.
+    Get all convocatorias.
+
+    Args:
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        List[Convocatoria]: A list of all convocatorias.
     """
     return await repo.get_all()
 
-@app.get("/convocatorias/{convocatoria_id}", response_model=Convocatoria)
+@app.get("/convocatorias/{convocatoria_id}", response_model=Convocatoria, status_code=200)
 async def read_convocatoria(convocatoria_id: int, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
-    Retrieve a single convocatoria by ID.
+    Get a single convocatoria by ID.
+
+    Args:
+        convocatoria_id (int): The ID of the convocatoria to retrieve.
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        Convocatoria: The retrieved convocatoria.
     """
     try:
         return await repo.get_by_id(convocatoria_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-@app.put("/convocatorias/{convocatoria_id}", response_model=Convocatoria)
+@app.put("/convocatorias/{convocatoria_id}", response_model=Convocatoria, status_code=200)
 async def update_convocatoria(convocatoria_id: int, convocatoria_update: ConvocatoriaUpdate, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
     Update a convocatoria by ID.
+
+    Args:
+        convocatoria_id (int): The ID of the convocatoria to update.
+        convocatoria_update (ConvocatoriaUpdate): The data to update the convocatoria with.
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        Convocatoria: The updated convocatoria.
     """
     try:
         return await repo.update(convocatoria_id, convocatoria_update)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-@app.delete("/convocatorias/{convocatoria_id}", response_model=Convocatoria)
+@app.delete("/convocatorias/{convocatoria_id}", response_model=Convocatoria, status_code=200)
 async def delete_convocatoria(convocatoria_id: int, repo: ConvocatoriaRepository = Depends(get_convocatoria_repo)):
     """
     Delete a convocatoria by ID.
+
+    Args:
+        convocatoria_id (int): The ID of the convocatoria to delete.
+        repo (ConvocatoriaRepository): The repository for convocatorias.
+
+    Returns:
+        Convocatoria: The deleted convocatoria.
     """
     try:
         return await repo.delete(convocatoria_id)
