@@ -177,7 +177,7 @@ class ConvocationService:
         """
         return await self.repository.create(convocation)
 
-    async def get_all_convolations(self, skip: int = 0, limit: int = 10) -> List[Convocation]:
+    async def get_all_convoations(self, skip: int = 0, limit: int = 10) -> List[Convocation]:
         """
         Retrieve a list of convocations.
 
@@ -268,7 +268,7 @@ from ..models.convocation_model import ConvocationCreate, ConvocationUpdate, Con
 from ..services.convocation_service import ConvocationService
 from typing import List
 
-router = APIRouter(prefix="/convocations", tags=["Convocations"])
+router = APIRouter(prefix="/convocations", tags=["convocations"])
 
 @router.post("/", response_model=Convocation)
 async def create_convocation(convocation: ConvocationCreate, service: ConvocationService = Depends(get_convocation_service)):
@@ -285,7 +285,7 @@ async def create_convocation(convocation: ConvocationCreate, service: Convocatio
     return await service.create_convocation(convocation)
 
 @router.get("/", response_model=List[Convocation])
-async def get_all_convolations(skip: int = 0, limit: int = 10, service: ConvocationService = Depends(get_convocation_service)):
+async def get_all_convoations(skip: int = 0, limit: int = 10, service: ConvocationService = Depends(get_convocation_service)):
     """
     Retrieve a list of convocations.
 
@@ -297,7 +297,7 @@ async def get_all_convolations(skip: int = 0, limit: int = 10, service: Convocat
     Returns:
         List[Convocation]: A list of convocation data.
     """
-    return await service.get_all_convolations(skip, limit)
+    return await service.get_all_convoations(skip, limit)
 
 @router.get("/{convocation_id}", response_model=Convocation)
 async def get_convocation_by_id(convocation_id: int, service: ConvocationService = Depends(get_convocation_service)):
