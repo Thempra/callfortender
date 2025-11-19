@@ -1,94 +1,114 @@
-# app/middleware.py
+# app/docs/documentation.py
 
-from fastapi import FastAPI, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-import time
-import logging
+from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import List
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+app = FastAPI(title="User Management API", version="1.0.0")
 
-class LoggingMiddleware(BaseHTTPMiddleware):
+class UserBase(BaseModel):
     """
-    Middleware to log request and response details.
+    Base model for user information.
     """
+    username: str = Field(..., min_length=3, max_length=50)
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[str] = None
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        """
-        Log the request path and method before passing it to the next middleware or route handler.
-        Log the response status code after receiving it from the route handler.
-
-        Args:
-            request (Request): The incoming request object.
-            call_next: The next middleware or route handler in the stack.
-
-        Returns:
-            Response: The outgoing response object.
-        """
-        start_time = time.time()
-        logger.info(f"Received {request.method} request for URL: {request.url.path}")
-        response = await call_next(request)
-        process_time = (time.time() - start_time) * 1000
-        logger.info(
-            f"Completed {request.method} request to {request.url.path}: "
-            f"{response.status_code} in {process_time:.2f}ms"
-        )
-        return response
-
-class AuthenticationMiddleware(BaseHTTPMiddleware):
+class UserCreate(UserBase):
     """
-    Middleware to handle authentication for incoming requests.
+    Model for creating a new user.
+    """
+    password: str = Field(..., min_length=8)
+
+class UserUpdate(UserBase):
+    """
+    Model for updating an existing user.
     """
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        """
-        Check if the request is authenticated before passing it to the next middleware or route handler.
-
-        Args:
-            request (Request): The incoming request object.
-            call_next: The next middleware or route handler in the stack.
-
-        Returns:
-            Response: The outgoing response object.
-        """
-        # Example authentication check
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or not self.is_valid_token(auth_header):
-            return Response(content="Unauthorized", status_code=401)
-        response = await call_next(request)
-        return response
-
-    def is_valid_token(self, token: str) -> bool:
-        """
-        Validate the provided authentication token.
-
-        Args:
-            token (str): The authentication token to validate.
-
-        Returns:
-            bool: True if the token is valid, False otherwise.
-        """
-        # Example token validation logic
-        return token == "valid-token"
-
-def add_middleware(app: FastAPI) -> None:
+class UserInDBBase(UserBase):
     """
-    Add middleware to the FastAPI application.
+    Base model for user information stored in the database.
+    """
+    id: int
+
+    class Config:
+        orm_mode = True
+
+class User(UserInDBBase):
+    """
+    Model for user information returned to the client.
+    """
+
+@app.post("/users/", response_model=User, tags=["Users"])
+async def create_user(user: UserCreate):
+    """
+    Create a new user.
 
     Args:
-        app (FastAPI): The FastAPI application instance.
+        user (UserCreate): The user data to be created.
+
+    Returns:
+        User: The created user data.
     """
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    app.add_middleware(LoggingMiddleware)
-    app.add_middleware(AuthenticationMiddleware)
+    # Placeholder for actual user creation logic
+    return user
 
-# __init__.py
+@app.get("/users/", response_model=List[User], tags=["Users"])
+async def read_users(skip: int = 0, limit: int = 10):
+    """
+    Retrieve a list of users.
 
-from fastapi import FastAPI  # Limitar tamaño
+    Args:
+        skip (int): Number of records to skip.
+        limit (int): Maximum number of records to return.
+
+    Returns:
+        List[User]: A list of user data.
+    """
+    # Placeholder for actual user retrieval logic
+    return []
+
+@app.get("/users/{user_id}", response_model=User, tags=["Users"])
+async def read_user(user_id: int):
+    """
+    Retrieve a user by ID.
+
+    Args:
+        user_id (int): The ID of the user to retrieve.
+
+    Returns:
+        User: The retrieved user data.
+    """
+    # Placeholder for actual user retrieval logic
+    return {}
+
+@app.put("/users/{user_id}", response_model=User, tags=["Users"])
+async def update_user(user_id: int, user_update: UserUpdate):
+    """
+    Update an existing user.
+
+    Args:
+        user_id (int): The ID of the user to update.
+        user_update (UserUpdate): The data to update the user with.
+
+    Returns:
+        User: The updated user data.
+    """
+    # Placeholder for actual user update logic
+    return {}
+
+@app.delete("/users/{user_id}", response_model=User, tags=["Users"])
+async def delete_user(user_id: int):
+    """
+    Delete a user by ID.
+
+    Args:
+        user_id (int): The ID of the user to delete.
+
+    Returns:
+        User: The deleted user data.
+    """
+    # Placeholder for actual user deletion logic
+    return {}
