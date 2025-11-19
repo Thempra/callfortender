@@ -1,141 +1,176 @@
 import pytest
 from fastapi.testclient import TestClient
-from src.app.database import get_db, AsyncSessionLocal
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import sessionmaker
-from unittest.mock import patch
-from httpx import AsyncClient
+from src.app.main import app
+from src.app.models.user_model import UserCreate, UserUpdate, User
+from unittest.mock import AsyncMock
+from datetime import date
 
-# Mocking the database settings for testing purposes
-DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# Fixtures
+@pytest.fixture
+def client():
+    return TestClient(app)
 
-engine = create_async_engine(DATABASE_URL, echo=True)
-TestingSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+@pytest.fixture
+def valid_user_data():
+    return {
+        "username": "testuser",
+        "email": "test@example.com",
+        "password": "securepassword123",
+        "first_name": "John",
+        "last_name": "Doe",
+        "date_of_birth": date(1990, 1, 1)
+    }
 
-@pytest.fixture(scope="module")
-async def client():
-    from src.app.main import app
+@pytest.fixture
+def valid_user_update_data():
+    return {
+        "first_name": "Jane",
+        "last_name": "Smith"
+    }
 
-    async with engine.begin() as conn:
-        await conn.run_sync(lambda _: None)  # No need to create tables for this test
+@pytest.fixture
+def call_processing_service_mock():
+    mock = AsyncMock()
+    mock.create.return_value = User(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        first_name="John",
+        last_name="Doe",
+        date_of_birth=date(1990, 1, 1)
+    )
+    mock.get_by_id.side_effect = lambda user_id: User(
+        id=user_id,
+        username="testuser",
+        email="test@example.com",
+        first_name="John",
+        last_name="Doe",
+        date_of_birth=date(1990, 1, 1)
+    ) if user_id == 1 else None
+    mock.update.return_value = User(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        first_name="Jane",
+        last_name="Smith",
+        date_of_birth=date(1990, 1, 1)
+    )
+    mock.delete.return_value = User(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        first_name="John",
+        last_name="Doe",
+        date_of_birth=date(1990, 1, 1)
+    )
+    return mock
 
-    async with AsyncClient(app=app, base_url="http://test") as ac:
-        yield ac
-
-@pytest.fixture(scope="function")
-async def db_session():
-    async with TestingSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+@pytest.fixture
+def app_with_mocked_service(client, call_processing_service_mock):
+    from src.app.dependencies import get_call_processing_service
+    get_call_processing_service.__wrapped__ = lambda: call_processing_service_mock
+    return client
 
 # Tests de funcionalidad básica
-def test_get_db(db_session):
-    assert isinstance(db_session, AsyncSession)
-
-# Tests de edge cases
-@pytest.mark.asyncio
-async def test_get_db_no_exception_on_close():
-    async with TestingSessionLocal() as session:
-        try:
-            pass  # No operations to raise an exception
-        except Exception as e:
-            await session.rollback()
-            raise e
-        finally:
-            await session.close()
-
-# Tests de manejo de errores
-@pytest.mark.asyncio
-async def test_get_db_rollback_on_exception():
-    async with TestingSessionLocal() as session:
-        try:
-            raise ValueError("Test exception")
-        except Exception as e:
-            await session.rollback()
-            assert isinstance(e, ValueError)
-        finally:
-            await session.close()
-
-# Mocking the get_db dependency for API tests
-@pytest.fixture(scope="function")
-def mock_get_db(monkeypatch):
-    async def override_get_db():
-        async with TestingSessionLocal() as session:
-            yield session
-
-    monkeypatch.setattr("src.app.main.get_db", override_get_db)
-
-@pytest.mark.asyncio
-async def test_create_user_valid_data(client, mock_get_db):
-    response = await client.post("/users/", json={
-        "username": "testuser",
-        "email": "test@example.com",
-        "password": "securepassword123",
-        "first_name": "John",
-        "last_name": "Doe",
-        "date_of_birth": "1990-01-01"
-    })
+def test_create_user_valid_data(app_with_mocked_service, valid_user_data):
+    response = app_with_mocked_service.post("/users/", json=valid_user_data)
     assert response.status_code == 200
     user = response.json()
-    assert user["username"] == "testuser"
-    assert user["email"] == "test@example.com"
+    assert user["username"] == valid_user_data["username"]
+    assert user["email"] == valid_user_data["email"]
 
-@pytest.mark.asyncio
-async def test_create_user_invalid_email(client, mock_get_db):
-    response = await client.post("/users/", json={
+def test_read_user_by_id(app_with_mocked_service):
+    response = app_with_mocked_service.get("/users/1")
+    assert response.status_code == 200
+    user = response.json()
+    assert user["id"] == 1
+
+def test_update_user_valid_data(app_with_mocked_service, valid_user_update_data):
+    response = app_with_mocked_service.put("/users/1", json=valid_user_update_data)
+    assert response.status_code == 200
+    user = response.json()
+    assert user["first_name"] == valid_user_update_data["first_name"]
+    assert user["last_name"] == valid_user_update_data["last_name"]
+
+def test_delete_user(app_with_mocked_service):
+    response = app_with_mocked_service.delete("/users/1")
+    assert response.status_code == 200
+    user = response.json()
+    assert user["id"] == 1
+
+# Tests de edge cases
+def test_create_user_min_length_username(app_with_mocked_service):
+    user_data = {
+        "username": "us",
+        "email": "test@example.com",
+        "password": "securepassword123"
+    }
+    response = app_with_mocked_service.post("/users/", json=user_data)
+    assert response.status_code == 422
+
+def test_create_user_max_length_username(app_with_mocked_service):
+    user_data = {
+        "username": "a" * 50,
+        "email": "test@example.com",
+        "password": "securepassword123"
+    }
+    response = app_with_mocked_service.post("/users/", json=user_data)
+    assert response.status_code == 200
+
+def test_create_user_no_first_name_or_last_name(app_with_mocked_service, valid_user_data):
+    user_data = {
+        "username": valid_user_data["username"],
+        "email": valid_user_data["email"],
+        "password": valid_user_data["password"]
+    }
+    response = app_with_mocked_service.post("/users/", json=user_data)
+    assert response.status_code == 200
+
+def test_create_user_no_date_of_birth(app_with_mocked_service, valid_user_data):
+    user_data = {
+        "username": valid_user_data["username"],
+        "email": valid_user_data["email"],
+        "password": valid_user_data["password"]
+    }
+    response = app_with_mocked_service.post("/users/", json=user_data)
+    assert response.status_code == 200
+
+# Tests de manejo de errores
+def test_create_user_invalid_email(app_with_mocked_service):
+    user_data = {
         "username": "testuser",
         "email": "invalid-email",
-        "password": "securepassword123",
-        "first_name": "John",
-        "last_name": "Doe",
-        "date_of_birth": "1990-01-01"
-    })
+        "password": "securepassword123"
+    }
+    response = app_with_mocked_service.post("/users/", json=user_data)
     assert response.status_code == 422
 
-@pytest.mark.asyncio
-async def test_create_user_password_too_short(client, mock_get_db):
-    response = await client.post("/users/", json={
+def test_create_user_password_too_short(app_with_mocked_service):
+    user_data = {
         "username": "testuser",
         "email": "test@example.com",
-        "password": "short",
-        "first_name": "John",
-        "last_name": "Doe",
-        "date_of_birth": "1990-01-01"
-    })
+        "password": "short"
+    }
+    response = app_with_mocked_service.post("/users/", json=user_data)
     assert response.status_code == 422
 
-@pytest.mark.asyncio
-async def test_create_user_invalid_username_length(client, mock_get_db):
-    response = await client.post("/users/", json={
+def test_create_user_invalid_username_length(app_with_mocked_service):
+    user_data = {
         "username": "a" * 51,
         "email": "test@example.com",
-        "password": "securepassword123",
-        "first_name": "John",
-        "last_name": "Doe",
-        "date_of_birth": "1990-01-01"
-    })
+        "password": "securepassword123"
+    }
+    response = app_with_mocked_service.post("/users/", json=user_data)
     assert response.status_code == 422
 
-@pytest.mark.asyncio
-async def test_read_user_by_invalid_id(client, mock_get_db):
-    response = await client.get("/users/0")
+def test_read_user_by_invalid_id(app_with_mocked_service):
+    response = app_with_mocked_service.get("/users/0")
     assert response.status_code == 404
 
-@pytest.mark.asyncio
-async def test_update_user_invalid_id(client, mock_get_db):
-    response = await client.put("/users/0", json={
-        "first_name": "Jane",
-        "last_name": "Doe"
-    })
+def test_update_user_invalid_id(app_with_mocked_service, valid_user_update_data):
+    response = app_with_mocked_service.put("/users/0", json=valid_user_update_data)
     assert response.status_code == 404
 
-@pytest.mark.asyncio
-async def test_delete_user_invalid_id(client, mock_get_db):
-    response = await client.delete("/users/0")
+def test_delete_user_invalid_id(app_with_mocked_service):
+    response = app_with_mocked_service.delete("/users/0")
     assert response.status_code == 404
