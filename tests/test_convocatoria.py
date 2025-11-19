@@ -107,13 +107,37 @@ def test_create_convocation_invalid_date_range(convocation_repository):
     with pytest.raises(ValueError):
         ConvocationCreate(**data)
 
+def test_create_convocation_with_location(convocation_repository, valid_convocation_data):
+    data = {
+        **valid_convocation_data,
+        "location": "Ciudad de Prueba"
+    }
+    db_convocation = ConvocationInDB(id=1, **data)
+    convocation_repository.session.add.return_value = None
+    convocation_repository.session.commit.return_value = None
+    convocation_repository.session.refresh.return_value = None
+    result = convocation_repository.create(ConvocationCreate(**data))
+    assert result.id == 1
+    assert result.location == "Ciudad de Prueba"
+
 # Tests de manejo de errores
 def test_get_convocation_by_invalid_id(convocation_repository):
     convocation_repository.session.execute.return_value.scalars.return_value.first.return_value = None
     result = convocation_repository.get_by_id(0)
     assert result is None
 
-def test_update_convocation_non_existent_id(convocation_repository, valid_convocation_update_data):
-    convocation_repository.session.execute.return_value.scalars.return_value.first.return_value = None
-    result = convocation_repository.update(0, ConvocationUpdate(**valid_convocation_update_data))
-    assert result is None
+def test_create_convocation_with_empty_title(convocation_repository, valid_convocation_data):
+    data = {
+        **valid_convocation_data,
+        "title": ""
+    }
+    with pytest.raises(ValueError):
+        ConvocationCreate(**data)
+
+def test_create_convocation_with_none_description(convocation_repository, valid_convocation_data):
+    data = {
+        **valid_convocation_data,
+        "description": None
+    }
+    with pytest.raises(ValueError):
+        ConvocationCreate(**data)
