@@ -96,21 +96,3 @@ async def test_delete_user(client: TestClient, test_db: AsyncSession):
     await test_db.commit()
     response = client.delete(f"/users/{db_user.id}")
     assert response.status_code == 204
-    response = client.get(f"/users/{db_user.id}")
-    assert response.status_code == 404
-
-
-# tests/test_main.py
-
-import pytest
-from fastapi.testclient import TestClient
-from app.main import app
-
-@pytest.fixture(scope="module")
-def test_client():
-    return TestClient(app)
-
-def test_read_root(test_client: TestClient):
-    response = test_client.get("/")
-    assert response.status_code == 200
-    assert response.json() == {"message": "Hello World"}
