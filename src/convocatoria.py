@@ -12,7 +12,7 @@ class ConvocationBase(BaseModel):
     """
     Base model for convocation information.
     """
-    title: str = Field(..., min_length=3, max_length=255)
+    title: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     publication_date: date
     deadline: date
@@ -150,6 +150,7 @@ class ConvocationRepository(BaseRepository):
 # app/services/convocation_service.py
 
 from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
 from ..repositories.convocation_repository import ConvocationRepository, get_convocation_repo
 from ..models.convocation_model import ConvocationCreate, ConvocationUpdate, Convocation
 from fastapi import Depends
@@ -226,18 +227,6 @@ class ConvocationService:
         """
         return await self.repository.delete(convocation_id)
 
-def get_convocation_service(repository: ConvocationRepository = Depends(get_convocation_repo)) -> ConvocationService:
-    """
-    Dependency to get the convocation service.
-
-    Args:
-        repository (ConvocationRepository): The convocation repository.
-
-    Returns:
-        ConvocationService: The convocation service.
-    """
-    return ConvocationService(repository)
-
 
 # app/dependencies.py
 
@@ -245,36 +234,36 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from .repositories.convocation_repository import ConvocationRepository, get_convocation_repo
-from .services.convocation_service import ConvocationService, get_convocation_service
+from .services.convocation_service import ConvocationService
 
-def get_user_repo(session: AsyncSession = Depends(get_db)) -> ConvocationRepository:
+def get_convocation_repo(session: AsyncSession = Depends(get_db)) -> ConvocationRepository:
     """
-    Dependency to get the user repository.
+    Dependency to get the convocation repository.
 
     Args:
         session (AsyncSession): The database session.
 
     Returns:
-        UserRepository: The user repository.
+        ConvocationRepository: The convocation repository.
     """
     return ConvocationRepository(session)
 
-def get_convocation_service(repository: ConvocationRepository = Depends(get_convocation_repo)) -> ConvocationService:
+def get_convocation_service(repo: ConvocationRepository = Depends(get_convocation_repo)) -> ConvocationService:
     """
     Dependency to get the convocation service.
 
     Args:
-        repository (ConvocationRepository): The convocation repository.
+        repo (ConvocationRepository): The convocation repository.
 
     Returns:
         ConvocationService: The convocation service.
     """
-    return ConvocationService(repository)
+    return ConvocationService(repo)
 
 
 # app/routers/convocations.py
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from ..models.convocation_model import ConvocationCreate, ConvocationUpdate, Convocation
 from ..services.convocation_service import ConvocationService, get_convocation_service
 from typing import List
@@ -322,7 +311,10 @@ async def get_convocation_by_id(convocation_id: int, service: ConvocationService
     Returns:
         Convocation: The retrieved convocation data.
     """
-    return await service.get_convocation_by_id(convocation_id)
+    try:
+        return await service.get_convocation_by_id(convocation_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.put("/convocations/{convocation_id}", response_model=Convocation)
 async def update_convocation(convocation_id: int, convocation_update: ConvocationUpdate, service: ConvocationService = Depends(get_convocation_service)):
@@ -337,7 +329,10 @@ async def update_convocation(convocation_id: int, convocation_update: Convocatio
     Returns:
         Convocation: The updated convocation data.
     """
-    return await service.update_convocation(convocation_id, convocation_update)
+    try:
+        return await service.update_convocation(convocation_id, convocation_update)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.delete("/convocations/{convocation_id}", response_model=Convocation)
 async def delete_convocation(convocation_id: int, service: ConvocationService = Depends(get_convocation_service)):
@@ -351,4 +346,7 @@ async def delete_convocation(convocation_id: int, service: ConvocationService = 
     Returns:
         Convocation: The deleted convocation data.
     """
-    return await service.delete_convocation(convocation_id)
+    try:
+        return await service.delete_convocation(convocation_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
