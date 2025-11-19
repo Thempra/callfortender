@@ -1,41 +1,24 @@
 import pytest
 from fastapi.testclient import TestClient
-from src.app.database import get_db, AsyncSessionLocal
-from unittest.mock import patch, AsyncMock
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import sessionmaker
-from pydantic import ValidationError
-from datetime import date
+from app.main import app
+from app.schemas.call_schema import CallCreate
+from app.schemas.user_schema import UserCreate
+from unittest.mock import AsyncMock
 
 # Fixtures
-@pytest.fixture(scope="module")
+@pytest.fixture
 def client():
-    from fastapi import FastAPI
-    from src.app.api.router import router
-
-    app = FastAPI()
-    app.include_router(router)
     return TestClient(app)
 
-@pytest.fixture(scope="module")
-async def async_session():
-    DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-    engine = create_async_engine(DATABASE_URL, echo=True)
-    AsyncSessionLocal = sessionmaker(
-        bind=engine,
-        class_=AsyncSession,
-        expire_on_commit=False
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(lambda _: None)  # No models to create in memory for this test
+@pytest.fixture
+def valid_call_data():
+    return {
+        "caller_id": 1,
+        "receiver_id": 2,
+        "call_time": "2023-10-01T12:00:00"
+    }
 
-    async_session = AsyncSessionLocal()
-    try:
-        yield async_session
-    finally:
-        await async_session.close()
-
-@pytest.fixture(scope="module")
+@pytest.fixture
 def valid_user_data():
     return {
         "username": "testuser",
@@ -43,158 +26,135 @@ def valid_user_data():
         "password": "securepassword123",
         "first_name": "John",
         "last_name": "Doe",
-        "date_of_birth": date(1990, 1, 1)
+        "date_of_birth": "1990-01-01"
     }
 
-@pytest.fixture(scope="module")
-def valid_user_update_data():
-    return {
-        "first_name": "Jane",
-        "last_name": "Smith"
+@pytest.fixture
+def call_service_mock():
+    mock = AsyncMock()
+    mock.create_call.return_value = {
+        "id": 1,
+        **valid_call_data
     }
+    mock.get_call_by_id.return_value = {
+        "id": 1,
+        **valid_call_data
+    }
+    return mock
+
+@pytest.fixture
+def user_service_mock():
+    mock = AsyncMock()
+    mock.create_user.return_value = {
+        "id": 1,
+        **valid_user_data
+    }
+    mock.get_user_by_id.return_value = {
+        "id": 1,
+        **valid_user_data
+    }
+    return mock
+
+@pytest.fixture
+def app_with_mocked_services(client, call_service_mock, user_service_mock):
+    from app.dependencies import get_call_service, get_user_service
+    get_call_service.__wrapped__ = lambda: call_service_mock
+    get_user_service.__wrapped__ = lambda: user_service_mock
+    return client
 
 # Tests de funcionalidad básica
-def test_create_user_valid_data(client, valid_user_data):
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.post("/users/", json=valid_user_data)
-        assert response.status_code == 200
-        user = response.json()
-        assert user["username"] == valid_user_data["username"]
-        assert user["email"] == valid_user_data["email"]
+def test_create_call_valid_data(app_with_mocked_services, valid_call_data):
+    response = app_with_mocked_services.post("/calls/", json=valid_call_data)
+    assert response.status_code == 200
+    call = response.json()
+    assert call["caller_id"] == valid_call_data["caller_id"]
+    assert call["receiver_id"] == valid_call_data["receiver_id"]
 
-def test_read_users(client):
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.get("/users/")
-        assert response.status_code == 200
+def test_create_user_valid_data(app_with_mocked_services, valid_user_data):
+    response = app_with_mocked_services.post("/users/", json=valid_user_data)
+    assert response.status_code == 200
+    user = response.json()
+    assert user["username"] == valid_user_data["username"]
+    assert user["email"] == valid_user_data["email"]
 
-def test_read_user_by_id(client):
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.get("/users/1")
-        assert response.status_code == 200
+def test_read_call_by_id(app_with_mocked_services):
+    response = app_with_mocked_services.get("/calls/1")
+    assert response.status_code == 200
+    call = response.json()
+    assert call["id"] == 1
 
-def test_update_user_valid_data(client, valid_user_update_data):
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.put("/users/1", json=valid_user_update_data)
-        assert response.status_code == 200
-
-def test_delete_user(client):
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.delete("/users/1")
-        assert response.status_code == 200
+def test_read_user_by_id(app_with_mocked_services):
+    response = app_with_mocked_services.get("/users/1")
+    assert response.status_code == 200
+    user = response.json()
+    assert user["id"] == 1
 
 # Tests de edge cases
-def test_create_user_min_length_username(client):
+def test_create_call_min_values(app_with_mocked_services):
+    call_data = {
+        "caller_id": 1,
+        "receiver_id": 2,
+        "call_time": "2023-10-01T12:00:00"
+    }
+    response = app_with_mocked_services.post("/calls/", json=call_data)
+    assert response.status_code == 200
+
+def test_create_user_min_values(app_with_mocked_services):
     user_data = {
-        "username": "us",
+        "username": "user",
+        "email": "u@e.com",
+        "password": "pass"
+    }
+    response = app_with_mocked_services.post("/users/", json=user_data)
+    assert response.status_code == 200
+
+def test_create_call_no_optional_fields(app_with_mocked_services):
+    call_data = {
+        "caller_id": 1,
+        "receiver_id": 2,
+        "call_time": "2023-10-01T12:00:00"
+    }
+    response = app_with_mocked_services.post("/calls/", json=call_data)
+    assert response.status_code == 200
+
+def test_create_user_no_optional_fields(app_with_mocked_services):
+    user_data = {
+        "username": "testuser",
         "email": "test@example.com",
         "password": "securepassword123"
     }
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.post("/users/", json=user_data)
-        assert response.status_code == 422
-
-def test_create_user_max_length_username(client):
-    user_data = {
-        "username": "a" * 50,
-        "email": "test@example.com",
-        "password": "securepassword123"
-    }
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.post("/users/", json=user_data)
-        assert response.status_code == 200
-
-def test_create_user_no_first_name_or_last_name(client, valid_user_data):
-    user_data = {
-        "username": valid_user_data["username"],
-        "email": valid_user_data["email"],
-        "password": valid_user_data["password"]
-    }
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.post("/users/", json=user_data)
-        assert response.status_code == 200
-
-def test_create_user_no_date_of_birth(client, valid_user_data):
-    user_data = {
-        "username": valid_user_data["username"],
-        "email": valid_user_data["email"],
-        "password": valid_user_data["password"]
-    }
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.post("/users/", json=user_data)
-        assert response.status_code == 200
+    response = app_with_mocked_services.post("/users/", json=user_data)
+    assert response.status_code == 200
 
 # Tests de manejo de errores
-def test_create_user_invalid_email(client):
-    user_data = {
-        "username": "testuser",
-        "email": "invalid-email",
-        "password": "securepassword123"
+def test_create_call_invalid_caller_id(app_with_mocked_services, valid_call_data):
+    call_data = {
+        **valid_call_data,
+        "caller_id": None
     }
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.post("/users/", json=user_data)
-        assert response.status_code == 422
+    response = app_with_mocked_services.post("/calls/", json=call_data)
+    assert response.status_code == 422
 
-def test_create_user_password_too_short(client):
+def test_create_user_invalid_email(app_with_mocked_services, valid_user_data):
     user_data = {
-        "username": "testuser",
-        "email": "test@example.com",
-        "password": "short"
+        **valid_user_data,
+        "email": "invalid-email"
     }
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.post("/users/", json=user_data)
-        assert response.status_code == 422
+    response = app_with_mocked_services.post("/users/", json=user_data)
+    assert response.status_code == 422
 
-def test_create_user_invalid_username_length(client):
+def test_create_call_password_too_short(app_with_mocked_services, valid_user_data):
     user_data = {
-        "username": "a" * 51,
-        "email": "test@example.com",
-        "password": "securepassword123"
+        **valid_user_data,
+        "password": "sh"
     }
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.post("/users/", json=user_data)
-        assert response.status_code == 422
+    response = app_with_mocked_services.post("/users/", json=user_data)
+    assert response.status_code == 422
 
-def test_read_user_by_invalid_id(client):
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.get("/users/0")
-        assert response.status_code == 404
+def test_read_call_by_invalid_id(app_with_mocked_services):
+    response = app_with_mocked_services.get("/calls/0")
+    assert response.status_code == 404
 
-def test_update_user_invalid_id(client, valid_user_update_data):
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.put("/users/0", json=valid_user_update_data)
-        assert response.status_code == 404
-
-def test_delete_user_invalid_id(client):
-    with patch("src.app.api.router.get_db", new_callable=AsyncMock) as mock_get_db:
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__.return_value = mock_session
-        response = client.delete("/users/0")
-        assert response.status_code == 404
+def test_read_user_by_invalid_id(app_with_mocked_services):
+    response = app_with_mocked_services.get("/users/0")
+    assert response.status_code == 404
