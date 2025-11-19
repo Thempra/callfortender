@@ -92,6 +92,20 @@ def test_create_convocation_max_length_title(convocation_repository):
     result = convocation_repository.create(ConvocationCreate(**data))
     assert result.id == 1
 
+def test_create_convocation_with_location(convocation_repository, valid_convocation_data):
+    data = {
+        **valid_convocation_data,
+        "location": "Sala de Juntas"
+    }
+    db_convocation = ConvocationInDB(id=1, **data)
+    convocation_repository.session.add.return_value = None
+    convocation_repository.session.commit.return_value = None
+    convocation_repository.session.refresh.return_value = None
+    result = convocation_repository.create(ConvocationCreate(**data))
+    assert result.id == 1
+    assert result.location == "Sala de Juntas"
+
+# Tests de manejo de errores
 def test_create_convocation_no_description(convocation_repository):
     data = {
         "title": "Convocatoria de Prueba",
@@ -111,7 +125,6 @@ def test_create_convocation_invalid_date_range(convocation_repository):
     with pytest.raises(ValueError):
         ConvocationCreate(**data)
 
-# Tests de manejo de errores
 def test_get_convocation_by_invalid_id(convocation_repository):
     convocation_repository.session.execute.return_value.scalars.return_value.first.return_value = None
     result = convocation_repository.get_by_id(0)
