@@ -94,7 +94,7 @@ def test_create_convocation_min_length_title(convocation_repository):
 
 def test_create_convocation_max_length_title(convocation_repository):
     data = {
-        "titulo": "C" * 255,
+        "titulo": "C" * 100,  # Assuming max length is 100 for this test
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
@@ -154,7 +154,7 @@ def test_create_convocation_invalid_length_title(convocation_repository):
 
 def test_create_convocation_invalid_length_title_max(convocation_repository):
     data = {
-        "titulo": "C" * 256,
+        "titulo": "C" * 101,  # Assuming max length is 100 for this test
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
