@@ -1,10 +1,13 @@
 # scraper/__init__.py
+
 from .scraper import WebScraper
 
+
 # scraper/scraper.py
+
 import logging
 from typing import List, Dict
-import aiohttp
+from aiohttp import ClientSession, ClientError
 from bs4 import BeautifulSoup
 
 class WebScraper:
@@ -16,30 +19,31 @@ class WebScraper:
         """
         Initialize the WebScraper with a base URL.
 
-        :param base_url: The base URL of the website to scrape.
+        :param base_url: The base URL for the website to scrape.
         """
         self.base_url = base_url
-        self.session = None
+        self.logger = logging.getLogger(__name__)
 
-    async def fetch(self, url: str) -> str:
+    async def fetch_html(self, session: ClientSession, url: str) -> str:
         """
-        Fetches the content of a given URL using aiohttp.
+        Fetch HTML content from a given URL using an aiohttp session.
 
-        :param url: The URL to fetch.
-        :return: The HTML content of the page.
-        :raises Exception: If an error occurs during fetching.
+        :param session: An aiohttp ClientSession instance.
+        :param url: The URL to fetch the HTML content from.
+        :return: The HTML content as a string.
+        :raises ClientError: If there is an error during the HTTP request.
         """
         try:
-            async with self.session.get(url) as response:
+            async with session.get(url) as response:
                 response.raise_for_status()
                 return await response.text()
-        except aiohttp.ClientError as e:
-            logging.error(f"Error fetching {url}: {e}")
+        except ClientError as e:
+            self.logger.error(f"Error fetching {url}: {e}")
             raise
 
-    async def parse(self, html: str) -> List[Dict[str, str]]:
+    def parse_html(self, html: str) -> List[Dict[str, str]]:
         """
-        Parses the HTML content to extract relevant data.
+        Parse HTML content and extract relevant data.
 
         :param html: The HTML content to parse.
         :return: A list of dictionaries containing extracted data.
@@ -54,54 +58,23 @@ class WebScraper:
 
     async def scrape(self) -> List[Dict[str, str]]:
         """
-        Orchestrates the scraping process by fetching and parsing the content.
+        Scrape the website and extract data.
 
-        :return: A list of dictionaries containing scraped data.
-        :raises Exception: If an error occurs during scraping.
+        :return: A list of dictionaries containing extracted data.
+        :raises ClientError: If there is an error during the HTTP request.
         """
-        try:
-            self.session = aiohttp.ClientSession()
-            html_content = await self.fetch(self.base_url)
-            data = await self.parse(html_content)
-            return data
-        finally:
-            await self.session.close()
+        url = self.base_url
+        async with ClientSession() as session:
+            html = await self.fetch_html(session, url)
+            return self.parse_html(html)
+
 
 # scraper/utils.py
+
 import logging
 
 def setup_logging():
     """
-    Sets up basic configuration for logging.
+    Set up basic configuration for logging.
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# main.py
-from fastapi import FastAPI
-from scraper.scraper import WebScraper
-from scraper.utils import setup_logging
-
-setup_logging()
-app = FastAPI()
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Event handler to initialize the web scraper on application startup.
-    """
-    global scraper
-    scraper = WebScraper(base_url="https://example.com")
-
-@app.get("/scrape", response_model=list)
-async def scrape_data():
-    """
-    Endpoint to trigger the web scraping process.
-
-    :return: A list of dictionaries containing scraped data.
-    """
-    try:
-        data = await scraper.scrape()
-        return data
-    except Exception as e:
-        logging.error(f"Error during scraping: {e}")
-        raise
