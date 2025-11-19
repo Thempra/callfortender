@@ -1,140 +1,192 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from app.main import app
+from app.schemas import UserCreate, UserUpdate, User
 from unittest.mock import AsyncMock
-from datetime import datetime
-from src.app.call.call_model import CallBase, CallCreate, CallUpdate, CallInDBBase, Call, CallInDB
-from src.app.call.call_repository import CallRepository
+from datetime import date
 
 # Fixtures
 @pytest.fixture
 def client():
-    from fastapi import FastAPI
-    app = FastAPI()
     return TestClient(app)
 
 @pytest.fixture
-async def async_session_mock():
-    session = AsyncMock(spec=AsyncSession)
-    return session
-
-@pytest.fixture
-def call_create_data():
+def valid_user_data():
     return {
-        "caller_id": 1,
-        "callee_id": 2,
-        "call_start_time": datetime.now(),
-        "call_end_time": datetime.now()
+        "username": "testuser",
+        "email": "test@example.com",
+        "password": "securepassword123",
+        "first_name": "John",
+        "last_name": "Doe",
+        "date_of_birth": date(1990, 1, 1)
     }
 
 @pytest.fixture
-def call_update_data():
+def valid_user_update_data():
     return {
-        "call_end_time": datetime.now()
+        "first_name": "Jane",
+        "last_name": "Smith"
     }
+
+@pytest.fixture
+def user_repository_mock():
+    mock = AsyncMock()
+    mock.create_user.return_value = User(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        first_name="John",
+        last_name="Doe",
+        date_of_birth=date(1990, 1, 1)
+    )
+    mock.get_users.return_value = [
+        User(
+            id=1,
+            username="testuser",
+            email="test@example.com",
+            first_name="John",
+            last_name="Doe",
+            date_of_birth=date(1990, 1, 1)
+        )
+    ]
+    mock.get_user_by_id.return_value = User(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        first_name="John",
+        last_name="Doe",
+        date_of_birth=date(1990, 1, 1)
+    )
+    mock.update_user.return_value = User(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        first_name="Jane",
+        last_name="Smith",
+        date_of_birth=date(1990, 1, 1)
+    )
+    mock.delete_user.return_value = User(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        first_name="John",
+        last_name="Doe",
+        date_of_birth=date(1990, 1, 1)
+    )
+    return mock
+
+@pytest.fixture
+def app_with_mocked_repository(client, user_repository_mock):
+    from app.dependencies import get_user_repository
+    get_user_repository.__wrapped__ = lambda: user_repository_mock
+    return client
 
 # Tests de funcionalidad básica
-async def test_create_call_valid_data(async_session_mock, call_create_data):
-    repository = CallRepository(session=async_session_mock)
-    async_session_mock.add.return_value = None
-    async_session_mock.commit.return_value = None
-    async_session_mock.refresh.return_value = None
+def test_create_user_valid_data(app_with_mocked_repository, valid_user_data):
+    response = app_with_mocked_repository.post("/users/", json=valid_user_data)
+    assert response.status_code == 200
+    user = response.json()
+    assert user["username"] == valid_user_data["username"]
+    assert user["email"] == valid_user_data["email"]
 
-    call_create = CallCreate(**call_create_data)
-    result = await repository.create(call_create)
+def test_read_users(app_with_mocked_repository):
+    response = app_with_mocked_repository.get("/users/")
+    assert response.status_code == 200
+    users = response.json()
+    assert len(users) == 1
 
-    assert isinstance(result, CallInDB)
-    assert result.caller_id == call_create_data["caller_id"]
-    assert result.callee_id == call_create_data["callee_id"]
+def test_read_user_by_id(app_with_mocked_repository):
+    response = app_with_mocked_repository.get("/users/1")
+    assert response.status_code == 200
+    user = response.json()
+    assert user["id"] == 1
 
-async def test_get_all_calls(async_session_mock):
-    repository = CallRepository(session=async_session_mock)
-    async_session_mock.execute.return_value.scalars.return_value.all.return_value = [
-        CallInDB(id=1, caller_id=1, callee_id=2, call_start_time=datetime.now(), call_end_time=datetime.now()),
-        CallInDB(id=2, caller_id=3, callee_id=4, call_start_time=datetime.now(), call_end_time=datetime.now())
-    ]
+def test_update_user_valid_data(app_with_mocked_repository, valid_user_update_data):
+    response = app_with_mocked_repository.put("/users/1", json=valid_user_update_data)
+    assert response.status_code == 200
+    user = response.json()
+    assert user["first_name"] == valid_user_update_data["first_name"]
+    assert user["last_name"] == valid_user_update_data["last_name"]
 
-    result = await repository.get_all()
-
-    assert len(result) == 2
-    assert all(isinstance(call, CallInDB) for call in result)
-
-async def test_get_call_by_id(async_session_mock):
-    repository = CallRepository(session=async_session_mock)
-    async_session_mock.execute.return_value.scalars.return_value.first.return_value = CallInDB(
-        id=1, caller_id=1, callee_id=2, call_start_time=datetime.now(), call_end_time=datetime.now()
-    )
-
-    result = await repository.get_by_id(1)
-
-    assert isinstance(result, CallInDB)
-    assert result.id == 1
-
-async def test_update_call_valid_data(async_session_mock, call_update_data):
-    repository = CallRepository(session=async_session_mock)
-    async_session_mock.commit.return_value = None
-    async_session_mock.refresh.return_value = None
-
-    call_to_update = CallInDB(id=1, caller_id=1, callee_id=2, call_start_time=datetime.now(), call_end_time=None)
-    result = await repository.update(call_to_update, CallUpdate(**call_update_data))
-
-    assert isinstance(result, CallInDB)
-    assert result.call_end_time == call_update_data["call_end_time"]
+def test_delete_user(app_with_mocked_repository):
+    response = app_with_mocked_repository.delete("/users/1")
+    assert response.status_code == 200
+    user = response.json()
+    assert user["id"] == 1
 
 # Tests de edge cases
-async def test_create_call_with_none_values(async_session_mock):
-    repository = CallRepository(session=async_session_mock)
-    async_session_mock.add.return_value = None
-    async_session_mock.commit.return_value = None
-    async_session_mock.refresh.return_value = None
-
-    call_create_data = {
-        "caller_id": 1,
-        "callee_id": 2,
-        "call_start_time": datetime.now(),
-        "call_end_time": None
+def test_create_user_min_length_username(app_with_mocked_repository):
+    user_data = {
+        "username": "us",
+        "email": "test@example.com",
+        "password": "securepassword123"
     }
-    call_create = CallCreate(**call_create_data)
-    result = await repository.create(call_create)
+    response = app_with_mocked_repository.post("/users/", json=user_data)
+    assert response.status_code == 422
 
-    assert isinstance(result, CallInDB)
-    assert result.caller_id == call_create_data["caller_id"]
-    assert result.callee_id == call_create_data["callee_id"]
-    assert result.call_end_time is None
+def test_create_user_max_length_username(app_with_mocked_repository):
+    user_data = {
+        "username": "a" * 50,
+        "email": "test@example.com",
+        "password": "securepassword123"
+    }
+    response = app_with_mocked_repository.post("/users/", json=user_data)
+    assert response.status_code == 200
 
-async def test_get_call_by_nonexistent_id(async_session_mock):
-    repository = CallRepository(session=async_session_mock)
-    async_session_mock.execute.return_value.scalars.return_value.first.return_value = None
+def test_create_user_no_first_name_or_last_name(app_with_mocked_repository, valid_user_data):
+    user_data = {
+        "username": valid_user_data["username"],
+        "email": valid_user_data["email"],
+        "password": valid_user_data["password"]
+    }
+    response = app_with_mocked_repository.post("/users/", json=user_data)
+    assert response.status_code == 200
 
-    result = await repository.get_by_id(999)
-
-    assert result is None
+def test_create_user_no_date_of_birth(app_with_mocked_repository, valid_user_data):
+    user_data = {
+        "username": valid_user_data["username"],
+        "email": valid_user_data["email"],
+        "password": valid_user_data["password"]
+    }
+    response = app_with_mocked_repository.post("/users/", json=user_data)
+    assert response.status_code == 200
 
 # Tests de manejo de errores
-async def test_create_call_invalid_data(async_session_mock):
-    repository = CallRepository(session=async_session_mock)
-    async_session_mock.add.side_effect = Exception("Database error")
-
-    call_create_data = {
-        "caller_id": 1,
-        "callee_id": 2,
-        "call_start_time": datetime.now(),
-        "call_end_time": None
+def test_create_user_invalid_email(app_with_mocked_repository):
+    user_data = {
+        "username": "testuser",
+        "email": "invalid-email",
+        "password": "securepassword123"
     }
-    call_create = CallCreate(**call_create_data)
+    response = app_with_mocked_repository.post("/users/", json=user_data)
+    assert response.status_code == 422
 
-    try:
-        await repository.create(call_create)
-    except Exception as e:
-        assert str(e) == "Database error"
+def test_create_user_password_too_short(app_with_mocked_repository):
+    user_data = {
+        "username": "testuser",
+        "email": "test@example.com",
+        "password": "short"
+    }
+    response = app_with_mocked_repository.post("/users/", json=user_data)
+    assert response.status_code == 422
 
-async def test_update_call_invalid_id(async_session_mock, call_update_data):
-    repository = CallRepository(session=async_session_mock)
-    async_session_mock.commit.side_effect = Exception("Database error")
+def test_create_user_invalid_username_length(app_with_mocked_repository):
+    user_data = {
+        "username": "a" * 51,
+        "email": "test@example.com",
+        "password": "securepassword123"
+    }
+    response = app_with_mocked_repository.post("/users/", json=user_data)
+    assert response.status_code == 422
 
-    call_to_update = CallInDB(id=999, caller_id=1, callee_id=2, call_start_time=datetime.now(), call_end_time=None)
+def test_read_user_by_invalid_id(app_with_mocked_repository):
+    response = app_with_mocked_repository.get("/users/0")
+    assert response.status_code == 404
 
-    try:
-        await repository.update(call_to_update, CallUpdate(**call_update_data))
-    except Exception as e:
-        assert str(e) == "Database error"
+def test_update_user_invalid_id(app_with_mocked_repository, valid_user_update_data):
+    response = app_with_mocked_repository.put("/users/0", json=valid_user_update_data)
+    assert response.status_code == 404
+
+def test_delete_user_invalid_id(app_with_mocked_repository):
+    response = app_with_mocked_repository.delete("/users/0")
+    assert response.status_code == 404
