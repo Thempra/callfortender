@@ -105,39 +105,3 @@ async def scrape_data():
     except Exception as e:
         logging.error(f"Error during scraping: {e}")
         raise
-
-# tests/test_scraper.py
-import pytest
-from unittest.mock import AsyncMock, patch
-from scraper.scraper import WebScraper
-
-@pytest.fixture
-async def scraper():
-    """
-    Fixture to create a WebScraper instance for testing.
-    """
-    return WebScraper(base_url="https://example.com")
-
-@patch('aiohttp.ClientSession.get')
-@pytest.mark.asyncio
-async def test_fetch(mock_get, scraper):
-    """
-    Test the fetch method of WebScraper.
-    """
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.text.return_value = "<html><body></body></html>"
-    mock_get.return_value.__aenter__.return_value = mock_response
-
-    content = await scraper.fetch("https://example.com")
-    assert content == "<html><body></body></html>"
-
-@patch('scraper.scraper.WebScraper.fetch')
-@pytest.mark.asyncio
-async def test_parse(mock_fetch, scraper):
-    """
-    Test the parse method of WebScraper.
-    """
-    mock_fetch.return_value = "<html><body><div class='item'><h2>Title</h2><a href='/link'>Link</a></div></body></html>"
-    data = await scraper.scrape()
-    assert data == [{'title': 'Title', 'link': '/link'}]
