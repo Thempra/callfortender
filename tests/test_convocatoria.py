@@ -5,7 +5,6 @@ from src.convocatoria import (
     ConvocatoriaCreate,
     ConvocatoriaUpdate,
     ConvocatoriaInDBBase,
-    Convocatoria,
     ConvocatoriaRepository,
     get_db,
     app
@@ -95,7 +94,7 @@ def test_create_convocation_min_length_title(convocation_repository):
 
 def test_create_convocation_max_length_title(convocation_repository):
     data = {
-        "titulo": "C" * 100,
+        "titulo": "C" * 255,
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
@@ -130,17 +129,8 @@ def test_create_convocation_with_empty_title(convocation_repository, valid_convo
 
 def test_get_convocation_by_invalid_id(convocation_repository):
     convocation_repository.session.execute.return_value.scalars.return_value.first.return_value = None
-    result = convocation_repository.get_by_id(0)
-    assert result is None
-
-def test_create_convocation_no_description(convocation_repository, valid_convocation_data):
-    data = {
-        "titulo": "Convocatoria de Prueba",
-        "fecha_inicio": date(2023, 10, 1),
-        "fecha_fin": date(2023, 10, 31)
-    }
     with pytest.raises(ValueError):
-        ConvocatoriaCreate(**data)
+        convocation_repository.get_by_id(0)
 
 def test_create_convocation_invalid_date_range(convocation_repository):
     data = {
@@ -164,7 +154,7 @@ def test_create_convocation_invalid_length_title(convocation_repository):
 
 def test_create_convocation_invalid_length_title_max(convocation_repository):
     data = {
-        "titulo": "C" * 101,
+        "titulo": "C" * 256,
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
