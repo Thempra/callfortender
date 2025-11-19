@@ -1,123 +1,57 @@
-# app/data_validation/__init__.py
+# app/database.py
 
-from .validators import EmailValidator, PasswordValidator
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from .config import settings
+
+DATABASE_URL = (
+    f"postgresql+asyncpg://{settings.database_username}:"
+    f"{settings.database_password}@{settings.database_hostname}:"
+    f"{settings.database_port}/{settings.database_name}"
+)
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
 
 
-# app/data_validation/validators.py
-
-import re
-from typing import Optional
-
-
-class EmailValidator:
+async def get_db() -> AsyncSession:
     """
-    Validator for email addresses.
+    Dependency to get the database session.
+
+    Yields:
+        AsyncSession: The database session.
     """
-
-    def __init__(self, email: str):
-        """
-        Initialize the EmailValidator with an email address.
-
-        :param email: The email address to validate.
-        """
-        self.email = email
-
-    def is_valid(self) -> bool:
-        """
-        Check if the email address is valid.
-
-        :return: True if the email is valid, False otherwise.
-        """
-        return re.match(r"[^@]+@[^@]+\.[^@]+", self.email) is not None
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception as e:
+            await session.rollback()
+            raise e
+        finally:
+            await session.close()
 
 
-class PasswordValidator:
+# app/config.py
+
+from pydantic import BaseSettings
+
+
+class Settings(BaseSettings):
     """
-    Validator for passwords.
+    Configuration settings for the application.
     """
+    database_hostname: str
+    database_port: str
+    database_password: str
+    database_name: str
+    database_username: str
 
-    def __init__(self, password: str):
-        """
-        Initialize the PasswordValidator with a password.
-
-        :param password: The password to validate.
-        """
-        self.password = password
-
-    def is_valid(self) -> bool:
-        """
-        Check if the password meets all validation criteria.
-
-        :return: True if the password is valid, False otherwise.
-        """
-        return (
-            len(self.password) >= 8 and
-            self._has_uppercase() and
-            self._has_lowercase() and
-            self._has_digit() and
-            self._has_special_character()
-        )
-
-    def _has_uppercase(self) -> bool:
-        """
-        Check if the password contains at least one uppercase letter.
-
-        :return: True if there is an uppercase letter, False otherwise.
-        """
-        return any(c.isupper() for c in self.password)
-
-    def _has_lowercase(self) -> bool:
-        """
-        Check if the password contains at least one lowercase letter.
-
-        :return: True if there is a lowercase letter, False otherwise.
-        """
-        return any(c.islower() for c in self.password)
-
-    def _has_digit(self) -> bool:
-        """
-        Check if the password contains at least one digit.
-
-        :return: True if there is a digit, False otherwise.
-        """
-        return any(c.isdigit() for c in self.password)
-
-    def _has_special_character(self) -> bool:
-        """
-        Check if the password contains at least one special character.
-
-        :return: True if there is a special character, False otherwise.
-        """
-        return re.search(r"[!@#$%^&*(),.?\":{}|<>]", self.password) is not None
+    class Config:
+        env_file = ".env"
 
 
-# app/data_validation/validation_service.py
-
-from typing import Optional
-from .validators import EmailValidator, PasswordValidator
-
-
-class ValidationService:
-    """
-    Service for performing data validation tasks.
-    """
-
-    def validate_email(self, email: str) -> bool:
-        """
-        Validate an email address.
-
-        :param email: The email address to validate.
-        :return: True if the email is valid, False otherwise.
-        """
-        validator = EmailValidator(email)
-        return validator.is_valid()
-
-    def validate_password(self, password: str) -> bool:
-        """
-        Validate a password.
-
-        :param password: The password to validate.
-        :return: True if the password is valid, False otherwise.
-        """
-        validator = PasswordValidator(password)
-        return validator.is_valid()
+settings = Settings()
