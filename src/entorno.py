@@ -1,94 +1,25 @@
 # scraper/__init__.py
-
 from .scraper import WebScraper
 
-
-# scraper/config.py
-
-import os
-from pydantic import BaseSettings
-
-class Settings(BaseSettings):
-    BASE_URL: str = "https://example.com"
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
-    POSTGRES_DB: str = "scraper_db"
-    POSTGRES_USER: str = "user"
-    POSTGRES_PASSWORD: str = "password"
-    POSTGRES_HOST: str = "localhost"
-    POSTGRES_PORT: int = 5432
-
-    class Config:
-        env_file = ".env"
-
-settings = Settings()
-
-
-# scraper/database.py
-
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from .config import settings
-
-DATABASE_URL = (
-    f"postgresql+asyncpg://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@"
-    f"{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
-)
-
-engine = create_async_engine(DATABASE_URL, echo=True)
-AsyncSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
-
-async def get_db():
-    """
-    Dependency to get the database session.
-
-    Yields:
-        AsyncSession: The database session.
-    """
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
-# scraper/models.py
-
-from sqlalchemy import Column, Integer, String, Text
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
-
-class Article(Base):
-    __tablename__ = "articles"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)
-    url = Column(String(255), unique=True, nullable=False)
-
-
 # scraper/scraper.py
-
-import logging
-from typing import List, Dict
-import aiohttp
+import requests
 from bs4 import BeautifulSoup
-from .config import settings
-from .database import get_db
-from .models import Article
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List, Dict
+import logging
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class WebScraper:
+    """
+    A class to handle web scraping operations.
+    """
+
     def __init__(self, base_url: str):
         """
         Initialize the WebScraper with a base URL.
 
-        Args:
-            base_url (str): The base URL to scrape.
+        :param base_url: The base URL of the website to scrape.
         """
         self.base_url = base_url
 
@@ -96,50 +27,90 @@ class WebScraper:
         """
         Fetch HTML content from a given URL.
 
-        Args:
-            url (str): The URL to fetch.
-
-        Returns:
-            str: The HTML content of the page.
+        :param url: The URL to fetch HTML from.
+        :return: The HTML content as a string.
+        :raises Exception: If the request fails.
         """
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    return await response.text()
-                else:
-                    logger.error(f"Failed to fetch {url}: Status code {response.status}")
-                    raise Exception(f"Failed to fetch {url}")
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            return response.text
+        except requests.RequestException as e:
+            logger.error(f"Error fetching {url}: {e}")
+            raise
 
-    def parse_html(self, html: str) -> List[Dict[str, str]]:
+    async def parse_html(self, html: str) -> List[Dict[str, str]]:
         """
-        Parse HTML content and extract article data.
+        Parse HTML content to extract relevant data.
 
-        Args:
-            html (str): The HTML content to parse.
-
-        Returns:
-            List[Dict[str, str]]: A list of dictionaries containing article data.
+        :param html: The HTML content to parse.
+        :return: A list of dictionaries containing extracted data.
         """
         soup = BeautifulSoup(html, 'html.parser')
-        articles = []
-        for item in soup.find_all('article'):
+        items = []
+        for item in soup.find_all('div', class_='item'):
             title = item.find('h2').get_text(strip=True)
-            content = item.find('p').get_text(strip=True)
-            url = item.find('a')['href']
-            articles.append({'title': title, 'content': content, 'url': url})
-        return articles
+            link = item.find('a')['href']
+            items.append({'title': title, 'link': link})
+        return items
 
-    async def scrape_articles(self) -> List[Article]:
+    async def scrape(self) -> List[Dict[str, str]]:
         """
-        Scrape articles from the base URL and save them to the database.
+        Scrape the website and extract data.
 
-        Returns:
-            List[Article]: A list of scraped Article objects.
+        :return: A list of dictionaries containing extracted data.
         """
-        html = await self.fetch_html(self.base_url)
-        article_data = self.parse_html(html)
-        articles = [Article(**data) for data in article_data]
-        async with get_db() as session:
-            session.add_all(articles)
-            await session.commit()
-            return articles
+        try:
+            html = await self.fetch_html(self.base_url)
+            data = await self.parse_html(html)
+            return data
+        except Exception as e:
+            logger.error(f"Error during scraping: {e}")
+            raise
+
+# scraper/tests/test_scraper.py
+import pytest
+from unittest.mock import patch, MagicMock
+from ..scraper import WebScraper
+
+@pytest.fixture
+def mock_response():
+    """
+    Create a mock response for testing.
+    """
+    mock = MagicMock()
+    mock.status_code = 200
+    mock.text = '<html><body><div class="item"><h2>Title</h2><a href="/link">Link</a></div></body></html>'
+    return mock
+
+@pytest.fixture
+def scraper():
+    """
+    Create a WebScraper instance for testing.
+    """
+    return WebScraper('http://example.com')
+
+@patch('requests.get')
+async def test_fetch_html(mock_get, mock_response, scraper):
+    """
+    Test the fetch_html method of WebScraper.
+    """
+    mock_get.return_value = mock_response
+    html = await scraper.fetch_html('http://example.com')
+    assert html == mock_response.text
+
+@patch.object(WebScraper, 'fetch_html', return_value='<html><body><div class="item"><h2>Title</h2><a href="/link">Link</a></div></body></html>')
+async def test_parse_html(mock_fetch_html, scraper):
+    """
+    Test the parse_html method of WebScraper.
+    """
+    data = await scraper.parse_html('<html><body><div class="item"><h2>Title</h2><a href="/link">Link</a></div></body></html>')
+    assert data == [{'title': 'Title', 'link': '/link'}]
+
+@patch.object(WebScraper, 'fetch_html', return_value='<html><body><div class="item"><h2>Title</h2><a href="/link">Link</a></div></body></html>')
+async def test_scrape(mock_fetch_html, scraper):
+    """
+    Test the scrape method of WebScraper.
+    """
+    data = await scraper.scrape()
+    assert data == [{'title': 'Title', 'link': '/link'}]
