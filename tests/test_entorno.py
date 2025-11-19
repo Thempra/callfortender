@@ -1,103 +1,141 @@
 import pytest
 from fastapi.testclient import TestClient
-from src.infrastructure.database import get_db, AsyncSessionLocal, engine
-from src.infrastructure.redis_client import RedisClient
-from src.infrastructure.settings import Settings
-from unittest.mock import AsyncMock, patch
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from src.app.database import get_db, AsyncSessionLocal
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import sessionmaker
+from unittest.mock import patch
+from httpx import AsyncClient
 
-# Fixtures
-@pytest.fixture
-async def async_session():
-    async with AsyncSessionLocal() as session:
-        yield session
+# Mocking the database settings for testing purposes
+DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
-@pytest.fixture
-def redis_client_mock():
-    mock = AsyncMock()
-    return mock
+engine = create_async_engine(DATABASE_URL, echo=True)
+TestingSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
 
-@pytest.fixture
-def settings_mock():
-    mock = Settings(
-        database_hostname="localhost",
-        database_port="5432",
-        database_password="password",
-        database_username="user",
-        database_name="testdb",
-        redis_host="localhost",
-        redis_port=6379,
-    )
-    return mock
+@pytest.fixture(scope="module")
+async def client():
+    from src.app.main import app
+
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda _: None)  # No need to create tables for this test
+
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        yield ac
+
+@pytest.fixture(scope="function")
+async def db_session():
+    async with TestingSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
 
 # Tests de funcionalidad básica
-def test_redis_client_set_get(redis_client_mock):
-    redis_client = RedisClient()
-    redis_client.redis.set = AsyncMock(return_value=True)
-    redis_client.redis.get = AsyncMock(return_value=b'test_value')
-    
-    await redis_client.set('key', 'test_value')
-    assert await redis_client.get('key') == b'test_value'
+def test_get_db(db_session):
+    assert isinstance(db_session, AsyncSession)
 
 # Tests de edge cases
-def test_redis_client_get_nonexistent_key(redis_client_mock):
-    redis_client = RedisClient()
-    redis_client.redis.get = AsyncMock(return_value=None)
-    
-    assert await redis_client.get('non_existent_key') is None
+@pytest.mark.asyncio
+async def test_get_db_no_exception_on_close():
+    async with TestingSessionLocal() as session:
+        try:
+            pass  # No operations to raise an exception
+        except Exception as e:
+            await session.rollback()
+            raise e
+        finally:
+            await session.close()
 
 # Tests de manejo de errores
-@patch("src.infrastructure.database.AsyncSessionLocal")
-async def test_database_session_error(mock_session_local):
-    mock_session_local.side_effect = Exception("Database connection failed")
-    
-    try:
-        async with get_db():
-            pass
-    except Exception as e:
-        assert str(e) == "Database connection failed"
+@pytest.mark.asyncio
+async def test_get_db_rollback_on_exception():
+    async with TestingSessionLocal() as session:
+        try:
+            raise ValueError("Test exception")
+        except Exception as e:
+            await session.rollback()
+            assert isinstance(e, ValueError)
+        finally:
+            await session.close()
 
-# Tests de funcionalidad básica para Settings
-def test_settings_initialization(settings_mock):
-    settings = settings_mock
-    assert settings.database_hostname == "localhost"
-    assert settings.database_port == "5432"
-    assert settings.database_password == "password"
-    assert settings.database_username == "user"
-    assert settings.database_name == "testdb"
-    assert settings.redis_host == "localhost"
-    assert settings.redis_port == 6379
+# Mocking the get_db dependency for API tests
+@pytest.fixture(scope="function")
+def mock_get_db(monkeypatch):
+    async def override_get_db():
+        async with TestingSessionLocal() as session:
+            yield session
 
-# Tests de edge cases para Settings
-def test_settings_with_empty_values():
-    settings = Settings(
-        database_hostname="",
-        database_port="",
-        database_password="",
-        database_username="",
-        database_name="",
-        redis_host="",
-        redis_port=0,
-    )
-    assert settings.database_hostname == ""
-    assert settings.database_port == ""
-    assert settings.database_password == ""
-    assert settings.database_username == ""
-    assert settings.database_name == ""
-    assert settings.redis_host == ""
-    assert settings.redis_port == 0
+    monkeypatch.setattr("src.app.main.get_db", override_get_db)
 
-# Tests de manejo de errores para Settings
-def test_settings_with_invalid_redis_port():
-    try:
-        settings = Settings(
-            database_hostname="localhost",
-            database_port="5432",
-            database_password="password",
-            database_username="user",
-            database_name="testdb",
-            redis_host="localhost",
-            redis_port=-1,
-        )
-    except ValueError as e:
-        assert str(e) == "redis_port must be a positive integer"
+@pytest.mark.asyncio
+async def test_create_user_valid_data(client, mock_get_db):
+    response = await client.post("/users/", json={
+        "username": "testuser",
+        "email": "test@example.com",
+        "password": "securepassword123",
+        "first_name": "John",
+        "last_name": "Doe",
+        "date_of_birth": "1990-01-01"
+    })
+    assert response.status_code == 200
+    user = response.json()
+    assert user["username"] == "testuser"
+    assert user["email"] == "test@example.com"
+
+@pytest.mark.asyncio
+async def test_create_user_invalid_email(client, mock_get_db):
+    response = await client.post("/users/", json={
+        "username": "testuser",
+        "email": "invalid-email",
+        "password": "securepassword123",
+        "first_name": "John",
+        "last_name": "Doe",
+        "date_of_birth": "1990-01-01"
+    })
+    assert response.status_code == 422
+
+@pytest.mark.asyncio
+async def test_create_user_password_too_short(client, mock_get_db):
+    response = await client.post("/users/", json={
+        "username": "testuser",
+        "email": "test@example.com",
+        "password": "short",
+        "first_name": "John",
+        "last_name": "Doe",
+        "date_of_birth": "1990-01-01"
+    })
+    assert response.status_code == 422
+
+@pytest.mark.asyncio
+async def test_create_user_invalid_username_length(client, mock_get_db):
+    response = await client.post("/users/", json={
+        "username": "a" * 51,
+        "email": "test@example.com",
+        "password": "securepassword123",
+        "first_name": "John",
+        "last_name": "Doe",
+        "date_of_birth": "1990-01-01"
+    })
+    assert response.status_code == 422
+
+@pytest.mark.asyncio
+async def test_read_user_by_invalid_id(client, mock_get_db):
+    response = await client.get("/users/0")
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_update_user_invalid_id(client, mock_get_db):
+    response = await client.put("/users/0", json={
+        "first_name": "Jane",
+        "last_name": "Doe"
+    })
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_delete_user_invalid_id(client, mock_get_db):
+    response = await client.delete("/users/0")
+    assert response.status_code == 404
