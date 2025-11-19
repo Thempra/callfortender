@@ -1,80 +1,132 @@
-# scraper/__init__.py
+# app/infrastructure/__init__.py
 
-from .scraper import WebScraper
+from .database import get_db, AsyncSessionLocal, engine
+from .redis_client import RedisClient
+from .settings import Settings
+
+__all__ = [
+    "get_db",
+    "AsyncSessionLocal",
+    "engine",
+    "RedisClient",
+    "Settings"
+]
+
+# app/infrastructure/database.py
+
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from ..config import settings
+
+DATABASE_URL = (
+    f"postgresql+asyncpg://{settings.database_username}:"
+    f"{settings.database_password}@{settings.database_hostname}:"
+    f"{settings.database_port}/{settings.database_name}"
+)
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
 
 
-# scraper/scraper.py
-
-import logging
-from typing import List, Dict
-from aiohttp import ClientSession, ClientError
-from bs4 import BeautifulSoup
-
-class WebScraper:
+async def get_db():
     """
-    A class to handle web scraping tasks.
+    Dependency to get the database session.
+
+    Yields:
+        AsyncSession: The database session.
+    """
+    async with AsyncSessionLocal() as session:
+        yield session
+
+# app/infrastructure/redis_client.py
+
+import redis.asyncio as redis
+from ..config import settings
+
+
+class RedisClient:
+    """
+    A client for interacting with a Redis server.
+
+    Attributes:
+        _client (redis.Redis): The underlying Redis client.
     """
 
-    def __init__(self, base_url: str):
+    def __init__(self):
+        self._client = redis.from_url(
+            f"redis://{settings.redis_hostname}:{settings.redis_port}"
+        )
+
+    async def set(self, key: str, value: str, ex: int = None) -> bool:
         """
-        Initialize the WebScraper with a base URL.
+        Set the string value of a key.
 
-        :param base_url: The base URL for the website to scrape.
+        Args:
+            key (str): The key to set.
+            value (str): The value to set for the key.
+            ex (int, optional): Expiration time in seconds. Defaults to None.
+
+        Returns:
+            bool: True if the operation was successful, False otherwise.
         """
-        self.base_url = base_url
-        self.logger = logging.getLogger(__name__)
+        return await self._client.set(key, value, ex=ex)
 
-    async def fetch_html(self, session: ClientSession, url: str) -> str:
+    async def get(self, key: str) -> str:
         """
-        Fetch HTML content from a given URL using an aiohttp session.
+        Get the string value of a key.
 
-        :param session: An aiohttp ClientSession instance.
-        :param url: The URL to fetch the HTML content from.
-        :return: The HTML content as a string.
-        :raises ClientError: If there is an error during the HTTP request.
+        Args:
+            key (str): The key to retrieve.
+
+        Returns:
+            str: The value of the key, or None if the key does not exist.
         """
-        try:
-            async with session.get(url) as response:
-                response.raise_for_status()
-                return await response.text()
-        except ClientError as e:
-            self.logger.error(f"Error fetching {url}: {e}")
-            raise
+        return await self._client.get(key)
 
-    def parse_html(self, html: str) -> List[Dict[str, str]]:
+    async def delete(self, *keys: str) -> int:
         """
-        Parse HTML content and extract relevant data.
+        Delete one or more keys.
 
-        :param html: The HTML content to parse.
-        :return: A list of dictionaries containing extracted data.
+        Args:
+            *keys (str): The keys to delete.
+
+        Returns:
+            int: The number of keys that were removed.
         """
-        soup = BeautifulSoup(html, 'html.parser')
-        items = []
-        for item in soup.find_all('div', class_='item'):
-            title = item.find('h2').get_text(strip=True)
-            link = item.find('a')['href']
-            items.append({'title': title, 'link': link})
-        return items
+        return await self._client.delete(*keys)
 
-    async def scrape(self) -> List[Dict[str, str]]:
-        """
-        Scrape the website and extract data.
+# app/infrastructure/settings.py
 
-        :return: A list of dictionaries containing extracted data.
-        :raises ClientError: If there is an error during the HTTP request.
-        """
-        url = self.base_url
-        async with ClientSession() as session:
-            html = await self.fetch_html(session, url)
-            return self.parse_html(html)
+from pydantic import BaseSettings
 
 
-# scraper/utils.py
-
-import logging
-
-def setup_logging():
+class Settings(BaseSettings):
     """
-    Set up basic configuration for logging.
+    Application settings loaded from environment variables.
+
+    Attributes:
+        database_hostname (str): The hostname of the PostgreSQL database.
+        database_port (str): The port number of the PostgreSQL database.
+        database_password (str): The password for the PostgreSQL database.
+        database_name (str): The name of the PostgreSQL database.
+        database_username (str): The username for the PostgreSQL database.
+        redis_hostname (str): The hostname of the Redis server.
+        redis_port (int): The port number of the Redis server.
     """
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    database_hostname: str
+    database_port: str
+    database_password: str
+    database_name: str
+    database_username: str
+    redis_hostname: str = "localhost"
+    redis_port: int = 6379
+
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
