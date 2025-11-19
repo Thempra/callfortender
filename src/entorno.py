@@ -117,16 +117,13 @@ class Settings(BaseSettings):
         redis_hostname (str): The hostname of the Redis server.
         redis_port (int): The port number of the Redis server.
     """
-
     database_hostname: str
     database_port: str
     database_password: str
     database_name: str
     database_username: str
-    redis_hostname: str = "localhost"
-    redis_port: int = 6379
+    redis_hostname: str
+    redis_port: int
 
     class Config:
         env_file = ".env"
-
-settings = Settings()
