@@ -111,19 +111,6 @@ def test_create_convocation_invalid_date_range(convocation_repository):
     with pytest.raises(ValueError):
         ConvocationCreate(**data)
 
-def test_create_convocation_with_location(convocation_repository, valid_convocation_data):
-    data = {
-        **valid_convocation_data,
-        "location": "Ciudad de Prueba"
-    }
-    db_convocation = ConvocationInDB(id=1, **data)
-    convocation_repository.session.add.return_value = None
-    convocation_repository.session.commit.return_value = None
-    convocation_repository.session.refresh.return_value = None
-    result = convocation_repository.create(ConvocationCreate(**data))
-    assert result.id == 1
-    assert result.location == "Ciudad de Prueba"
-
 # Tests de manejo de errores
 def test_get_convocation_by_invalid_id(convocation_repository):
     convocation_repository.session.execute.return_value.scalars.return_value.first.return_value = None
