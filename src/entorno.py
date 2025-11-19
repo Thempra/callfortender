@@ -1,108 +1,319 @@
-# setup.py
-from setuptools import find_packages, setup
-
-setup(
-    name='fastapi_environment',
-    version='0.1.0',
-    packages=find_packages(),
-    install_requires=[
-        'fastapi>=0.75.0',
-        'uvicorn[standard]>=0.16.0',
-        'sqlalchemy>=1.4.39',
-        'asyncpg>=0.26.0',
-        'pydantic[email]>=1.9.1',
-        'pytest>=6.2.5',
-        'coverage>=6.3.2',
-        'redis>=4.1.4'
-    ],
-    extras_require={
-        'dev': [
-            'black>=21.12b0',
-            'flake8>=4.0.1',
-            'mypy>=0.931'
-        ]
-    }
-)
-
-# app/__init__.py
-from .main import app
-
-# app/main.py
+# main.py
 from fastapi import FastAPI
-from .routers import user_router
-from .database import engine, Base
-
-Base.metadata.create_all(bind=engine)
+from app.routers import users
+from app.dependencies import get_db
+from sqlalchemy.orm import Session
 
 app = FastAPI()
 
-app.include_router(user_router.router, prefix="/users", tags=["users"])
+@app.on_event("startup")
+async def startup_event():
+    """
+    Startup event to initialize any necessary resources.
+    """
+    pass
 
-# app/routers/user_router.py
+@app.on_event("shutdown")
+async def shutdown_event():
+    """
+    Shutdown event to clean up any resources.
+    """
+    pass
+
+app.include_router(users.router, prefix="/users", tags=["users"])
+
+# app/__init__.py
+from .routers import users
+from .dependencies import get_db
+
+# app/routers/users.py
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from ..schemas import UserCreate, User
-from ..dependencies import get_user_repo
-from ..repositories.user_repository import UserRepository
+from ..crud import create_user, get_users, get_user_by_id, update_user, delete_user
+from ..dependencies import get_db
 
 router = APIRouter()
 
 @router.post("/", response_model=User)
-async def create_user(user: UserCreate, user_repo: UserRepository = Depends(get_user_repo)):
-    try:
-        return await user_repo.create(user)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
+    """
+    Create a new user.
+
+    Args:
+        user (UserCreate): The user data to be created.
+        db (Session): The database session.
+
+    Returns:
+        User: The created user data.
+    """
+    db_user = create_user(db=db, user=user)
+    return db_user
+
+@router.get("/", response_model=list[User])
+def read_users(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+    """
+    Retrieve a list of users.
+
+    Args:
+        skip (int): The number of records to skip.
+        limit (int): The maximum number of records to return.
+        db (Session): The database session.
+
+    Returns:
+        List[User]: A list of user data.
+    """
+    users = get_users(db, skip=skip, limit=limit)
+    return users
 
 @router.get("/{user_id}", response_model=User)
-async def get_user(user_id: int, user_repo: UserRepository = Depends(get_user_repo)):
-    try:
-        return await user_repo.get_by_id(user_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+def read_user(user_id: int, db: Session = Depends(get_db)):
+    """
+    Retrieve a single user by ID.
+
+    Args:
+        user_id (int): The ID of the user to retrieve.
+        db (Session): The database session.
+
+    Returns:
+        User: The retrieved user data.
+    """
+    db_user = get_user_by_id(db, user_id=user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return db_user
 
 @router.put("/{user_id}", response_model=User)
-async def update_user(user_id: int, user_update: UserCreate, user_repo: UserRepository = Depends(get_user_repo)):
-    try:
-        return await user_repo.update(user_id, user_update)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+def update_existing_user(user_id: int, user: UserCreate, db: Session = Depends(get_db)):
+    """
+    Update an existing user.
+
+    Args:
+        user_id (int): The ID of the user to update.
+        user (UserCreate): The updated user data.
+        db (Session): The database session.
+
+    Returns:
+        User: The updated user data.
+    """
+    db_user = update_user(db=db, user_id=user_id, user=user)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return db_user
 
 @router.delete("/{user_id}", response_model=User)
-async def delete_user(user_id: int, user_repo: UserRepository = Depends(get_user_repo)):
-    try:
-        return await user_repo.delete(user_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+def delete_existing_user(user_id: int, db: Session = Depends(get_db)):
+    """
+    Delete an existing user.
+
+    Args:
+        user_id (int): The ID of the user to delete.
+        db (Session): The database session.
+
+    Returns:
+        User: The deleted user data.
+    """
+    db_user = delete_user(db=db, user_id=user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return db_user
 
 # app/schemas.py
 from pydantic import BaseModel, EmailStr, Field
 from datetime import date
+from typing import Optional
 
 class UserBase(BaseModel):
+    """
+    Base model for user information.
+    """
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
-    first_name: str | None = None
-    last_name: str | None = None
-    date_of_birth: date | None = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[date] = None
 
 class UserCreate(UserBase):
+    """
+    Model for creating a new user.
+    """
     password: str = Field(..., min_length=8)
 
-class User(UserBase):
+class UserUpdate(UserBase):
+    """
+    Model for updating an existing user.
+    """
+
+class UserInDBBase(UserBase):
+    """
+    Base model for user information stored in the database.
+    """
     id: int
 
     class Config:
         orm_mode = True
 
+class User(UserInDBBase):
+    """
+    Model for user information returned to the client.
+    """
+
+class UserInDB(UserInDBBase):
+    """
+    Model for user information stored in the database, including hashed password.
+    """
+    hashed_password: str
+
+# app/crud.py
+from sqlalchemy.orm import Session
+from .models import User as UserModel
+from .schemas import UserCreate, UserUpdate
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def create_user(db: Session, user: UserCreate):
+    """
+    Create a new user in the database.
+
+    Args:
+        db (Session): The database session.
+        user (UserCreate): The user data to be created.
+
+    Returns:
+        UserModel: The created user data.
+    """
+    hashed_password = pwd_context.hash(user.password)
+    db_user = UserModel(
+        username=user.username,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        date_of_birth=user.date_of_birth,
+        hashed_password=hashed_password
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def get_users(db: Session, skip: int = 0, limit: int = 10):
+    """
+    Retrieve a list of users from the database.
+
+    Args:
+        db (Session): The database session.
+        skip (int): The number of records to skip.
+        limit (int): The maximum number of records to return.
+
+    Returns:
+        List[UserModel]: A list of user data.
+    """
+    return db.query(UserModel).offset(skip).limit(limit).all()
+
+def get_user_by_id(db: Session, user_id: int):
+    """
+    Retrieve a single user by ID from the database.
+
+    Args:
+        db (Session): The database session.
+        user_id (int): The ID of the user to retrieve.
+
+    Returns:
+        UserModel: The retrieved user data.
+    """
+    return db.query(UserModel).filter(UserModel.id == user_id).first()
+
+def update_user(db: Session, user_id: int, user: UserUpdate):
+    """
+    Update an existing user in the database.
+
+    Args:
+        db (Session): The database session.
+        user_id (int): The ID of the user to update.
+        user (UserUpdate): The updated user data.
+
+    Returns:
+        UserModel: The updated user data.
+    """
+    db_user = get_user_by_id(db, user_id=user_id)
+    if db_user is None:
+        return None
+    for key, value in user.dict(exclude_unset=True).items():
+        setattr(db_user, key, value)
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def delete_user(db: Session, user_id: int):
+    """
+    Delete an existing user from the database.
+
+    Args:
+        db (Session): The database session.
+        user_id (int): The ID of the user to delete.
+
+    Returns:
+        UserModel: The deleted user data.
+    """
+    db_user = get_user_by_id(db, user_id=user_id)
+    if db_user is None:
+        return None
+    db.delete(db_user)
+    db.commit()
+    return db_user
+
+# app/models.py
+from sqlalchemy import Column, Integer, String, Date
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+class User(Base):
+    """
+    Model for user information stored in the database.
+    """
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, index=True)
+    email = Column(String(255), unique=True, index=True)
+    first_name = Column(String(100))
+    last_name = Column(String(100))
+    date_of_birth = Column(Date)
+    hashed_password = Column(String)
+
 # app/dependencies.py
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from .database import get_db
-from .repositories.user_repository import UserRepository
+from ..database import get_db
 
-def get_user_repo(session: AsyncSession = Depends(get_db)) -> UserRepository:
+def get_user_repo(session: AsyncSession = Depends(get_db)):
+    """
+    Dependency to get the user repository.
+
+    Args:
+        session (AsyncSession): The database session.
+
+    Returns:
+        UserRepository: The user repository.
+    """
+    from .repositories.user_repository import UserRepository
     return UserRepository(session)
+
+def get_call_processing_service(user_repo: UserRepository = Depends(get_user_repo)):
+    """
+    Dependency to get the call processing service.
+
+    Args:
+        user_repo (UserRepository): The user repository.
+
+    Returns:
+        CallProcessingService: The call processing service.
+    """
+    from .services.call_processing_service import CallProcessingService
+    return CallProcessingService(user_repo)
 
 # app/database.py
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -119,6 +330,12 @@ AsyncSessionLocal = sessionmaker(
 )
 
 async def get_db():
+    """
+    Dependency to get the database session.
+
+    Yields:
+        AsyncSession: The database session.
+    """
     async with AsyncSessionLocal() as session:
         yield session
 
@@ -126,91 +343,118 @@ async def get_db():
 from pydantic import BaseSettings
 
 class Settings(BaseSettings):
-    database_hostname: str
-    database_port: str
-    database_password: str
-    database_name: str
-    database_username: str
-
-    class Config:
-        env_file = ".env"
+    """
+    Configuration settings for the application.
+    """
+    database_hostname: str = "localhost"
+    database_port: str = "5432"
+    database_password: str = "password"
+    database_name: str = "fastapi_db"
+    database_username: str = "postgres"
 
 settings = Settings()
 
-# app/models/user_model.py
-from sqlalchemy import Column, Integer, String, Date
-from sqlalchemy.ext.declarative import declarative_base
+# tests/test_main.py
+from fastapi.testclient import TestClient
+from app.main import app
 
-Base = declarative_base()
+client = TestClient(app)
 
-class UserInDB(Base):
-    __tablename__ = "users"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, nullable=False)
-    email = Column(String(255), unique=True, nullable=False)
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    date_of_birth = Column(Date)
-    hashed_password = Column(String(255), nullable=False)
+def test_create_user():
+    """
+    Test creating a new user.
+    """
+    response = client.post(
+        "/users/",
+        json={"username": "testuser", "email": "test@example.com", "password": "testpass"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["username"] == "testuser"
+    assert data["email"] == "test@example.com"
 
-# app/repositories/user_repository.py
-from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.user_model import UserInDB
-from .base_repository import BaseRepository
-from ..schemas import UserCreate, UserUpdate, User
+def test_read_users():
+    """
+    Test retrieving a list of users.
+    """
+    response = client.get("/users/")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
 
-class UserRepository(BaseRepository):
-    def __init__(self, session: AsyncSession):
-        super().__init__(session)
+def test_read_user():
+    """
+    Test retrieving a single user by ID.
+    """
+    response = client.get("/users/1")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == 1
 
-    async def create(self, user: UserCreate) -> User:
-        db_user = UserInDB(
-            username=user.username,
-            email=user.email,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            date_of_birth=user.date_of_birth,
-            hashed_password=self._hash_password(user.password)
-        )
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
-        return User.from_orm(db_user)
+def test_update_user():
+    """
+    Test updating an existing user.
+    """
+    response = client.put(
+        "/users/1",
+        json={"username": "updateduser", "email": "updated@example.com", "password": "updatedpass"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["username"] == "updateduser"
+    assert data["email"] == "updated@example.com"
 
-    async def get_all(self, skip: int = 0, limit: int = 10) -> list[User]:
-        result = await self.session.execute(select(UserInDB).offset(skip).limit(limit))
-        return [User.from_orm(user) for user in result.scalars().all()]
+def test_delete_user():
+    """
+    Test deleting an existing user.
+    """
+    response = client.delete("/users/1")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == 1
 
-    async def get_by_id(self, user_id: int) -> User:
-        result = await self.session.execute(select(UserInDB).where(UserInDB.id == user_id))
-        db_user = result.scalar_one_or_none()
-        if not db_user:
-            raise ValueError(f"User with id {user_id} not found")
-        return User.from_orm(db_user)
+# Dockerfile
+FROM python:3.9-slim
 
-    async def update(self, user_id: int, user_update: UserUpdate) -> User:
-        db_user = await self.get_by_id(user_id)
-        for key, value in user_update.dict(exclude_unset=True).items():
-            setattr(db_user, key, value)
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
-        return User.from_orm(db_user)
+WORKDIR /app
 
-    async def delete(self, user_id: int) -> User:
-        db_user = await self.get_by_id(user_id)
-        await self.session.delete(db_user)
-        await self.session.commit()
-        return User.from_orm(db_user)
+COPY requirements.txt .
 
-    def _hash_password(self, password: str) -> str:
-        # Placeholder for actual hashing logic
-        return password
+RUN pip install --no-cache-dir -r requirements.txt
 
-# app/repositories/base_repository.py
-from sqlalchemy.ext.asyncio import AsyncSession
+COPY . .
 
-class BaseRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# docker-compose.yml
+version: '3.9'
+
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: fastapi_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+volumes:
+  db_data:
+
+# requirements.txt
+fastapi[all]
+uvicorn[standard]
+sqlalchemy
+asyncpg
+passlib
+bcrypt
+pydantic
+pytest
