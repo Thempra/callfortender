@@ -29,7 +29,7 @@ def convocation_repository(async_session):
 @pytest.fixture
 def valid_convocation_data():
     return {
-        "nombre": "Convocatoria de Prueba",
+        "titulo": "Convocatoria de Prueba",
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
@@ -38,7 +38,7 @@ def valid_convocation_data():
 @pytest.fixture
 def valid_convocation_update_data():
     return {
-        "nombre": "Convocatoria Actualizada",
+        "titulo": "Convocatoria Actualizada",
         "descripcion": "Esta es una convocatoria actualizada.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 11, 30)
@@ -52,7 +52,7 @@ def test_create_convocation_valid_data(convocation_repository, valid_convocation
     convocation_repository.session.refresh.return_value = None
     result = convocation_repository.create(ConvocatoriaCreate(**valid_convocation_data))
     assert result.id == 1
-    assert result.nombre == valid_convocation_data["nombre"]
+    assert result.titulo == valid_convocation_data["titulo"]
     assert result.descripcion == valid_convocation_data["descripcion"]
 
 def test_get_all_convolations(convocation_repository, valid_convocation_data):
@@ -68,10 +68,19 @@ def test_get_convocation_by_id(convocation_repository, valid_convocation_data):
     result = convocation_repository.get_by_id(1)
     assert result.id == 1
 
+def test_update_convocation_valid_data(convocation_repository, valid_convocation_data, valid_convocation_update_data):
+    db_convocation = ConvocatoriaInDBBase(id=1, **valid_convocation_data)
+    convocation_repository.session.execute.return_value.scalars.return_value.first.return_value = db_convocation
+    convocation_repository.session.commit.return_value = None
+    result = convocation_repository.update(1, ConvocatoriaUpdate(**valid_convocation_update_data))
+    assert result.id == 1
+    assert result.titulo == valid_convocation_update_data["titulo"]
+    assert result.descripcion == valid_convocation_update_data["descripcion"]
+
 # Tests de edge cases
-def test_create_convocation_min_length_name(convocation_repository):
+def test_create_convocation_min_length_title(convocation_repository):
     data = {
-        "nombre": "C" * 3,
+        "titulo": "C" * 3,
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
@@ -83,9 +92,9 @@ def test_create_convocation_min_length_name(convocation_repository):
     result = convocation_repository.create(ConvocatoriaCreate(**data))
     assert result.id == 1
 
-def test_create_convocation_max_length_name(convocation_repository):
+def test_create_convocation_max_length_title(convocation_repository):
     data = {
-        "nombre": "C" * 100,  # Assuming max length is 100 for this test
+        "titulo": "C" * 100,  # Assuming max length is 100 for this test
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
@@ -110,10 +119,10 @@ def test_create_convocation_with_none_description(convocation_repository, valid_
     assert result.id == 1
 
 # Tests de manejo de errores
-def test_create_convocation_with_empty_name(convocation_repository, valid_convocation_data):
+def test_create_convocation_with_empty_title(convocation_repository, valid_convocation_data):
     data = {
         **valid_convocation_data,
-        "nombre": ""
+        "titulo": ""
     }
     with pytest.raises(ValueError):
         ConvocatoriaCreate(**data)
@@ -125,7 +134,7 @@ def test_get_convocation_by_invalid_id(convocation_repository):
 
 def test_create_convocation_invalid_date_range(convocation_repository):
     data = {
-        "nombre": "Convocatoria de Prueba",
+        "titulo": "Convocatoria de Prueba",
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 31),
         "fecha_fin": date(2023, 10, 1)
@@ -133,9 +142,9 @@ def test_create_convocation_invalid_date_range(convocation_repository):
     with pytest.raises(ValueError):
         ConvocatoriaCreate(**data)
 
-def test_create_convocation_invalid_length_name(convocation_repository):
+def test_create_convocation_invalid_length_title(convocation_repository):
     data = {
-        "nombre": "C" * 2,
+        "titulo": "C" * 2,
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
@@ -143,12 +152,17 @@ def test_create_convocation_invalid_length_name(convocation_repository):
     with pytest.raises(ValueError):
         ConvocatoriaCreate(**data)
 
-def test_create_convocation_invalid_length_name_max(convocation_repository):
+def test_create_convocation_invalid_length_title_max(convocation_repository):
     data = {
-        "nombre": "C" * 101,  # Assuming max length is 100 for this test
+        "titulo": "C" * 101,  # Assuming max length is 100 for this test
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
     }
     with pytest.raises(ValueError):
         ConvocatoriaCreate(**data)
+
+def test_update_convocation_invalid_id(convocation_repository, valid_convocation_update_data):
+    convocation_repository.session.execute.return_value.scalars.return_value.first.return_value = None
+    with pytest.raises(ValueError):
+        convocation_repository.update(0, ConvocatoriaUpdate(**valid_convocation_update_data))
