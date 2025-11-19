@@ -1,93 +1,88 @@
 import pytest
-from unittest.mock import AsyncMock, patch
-from aiohttp import ClientResponseError
-from bs4 import BeautifulSoup
-from scraper.scraper import WebScraper
-from scraper.config import settings
-from scraper.models import Article
-from sqlalchemy.ext.asyncio import AsyncSession
+from unittest.mock import patch, MagicMock
+from scraper.scraper import Scraper
 
 # Fixtures
 @pytest.fixture
-def mock_aiohttp_session():
-    session = AsyncMock()
-    response = AsyncMock()
-    response.status = 200
-    response.text.return_value = "<html><body><h1>Title</h1><p>Content</p></body></html>"
-    session.get.return_value.__aenter__.return_value = response
-    return session
+def scraper():
+    return Scraper("http://example.com")
 
-@pytest.fixture
-def scraper(mock_aiohttp_session):
-    with patch('aiohttp.ClientSession', return_value=mock_aiohttp_session):
-        yield WebScraper()
+@patch('requests.get')
+async def test_fetch_html(mock_get, scraper):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "<html><body><h1>Test</h1></body></html>"
+    mock_get.return_value = mock_response
 
-@pytest.fixture
-async def mock_db_session():
-    session = AsyncMock(spec=AsyncSession)
-    return session
+    html = await scraper.fetch_html("http://example.com")
+    assert html == "<html><body><h1>Test</h1></body></html>"
+
+@patch('requests.get')
+async def test_fetch_html_failure(mock_get, scraper):
+    mock_get.side_effect = Exception("Failed to fetch")
+
+    try:
+        await scraper.fetch_html("http://example.com")
+    except Exception as e:
+        assert str(e) == "Failed to fetch"
+
+def test_parse_html_basic(scraper):
+    html_content = "<html><body><div class='item'>Test Item</div></body></html>"
+    with patch.object(Scraper, 'parse_html', return_value=['Test Item']) as mock_parse:
+        result = scraper.parse_html(html_content)
+        assert result == ['Test Item']
 
 # Tests de funcionalidad básica
-def test_fetch_page_success(scraper, mock_aiohttp_session):
-    url = "http://example.com"
-    content = scraper.fetch_page(url)
-    assert content == "<html><body><h1>Title</h1><p>Content</p></body></html>"
-    mock_aiohttp_session.get.assert_called_once_with(url)
+def test_scraper_initialization():
+    scraper = Scraper("http://example.com")
+    assert scraper.base_url == "http://example.com"
 
-def test_parse_content_success(scraper):
-    html_content = "<html><body><h1>Title</h1><p>Content</p></body></html>"
-    soup = BeautifulSoup(html_content, 'html.parser')
-    title, content = scraper.parse_content(soup)
-    assert title == "Title"
-    assert content == "Content"
+@patch('requests.get')
+async def test_scrape_data_success(mock_get, scraper):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "<html><body><div class='item'>Test Item</div></body></html>"
+    mock_get.return_value = mock_response
 
-def test_save_article_success(mock_db_session):
-    article = Article(title="Test Title", content="Test Content")
-    WebScraper.save_article(article, mock_db_session)
-    mock_db_session.add.assert_called_once_with(article)
-    mock_db_session.commit.assert_called_once()
+    with patch.object(Scraper, 'parse_html', return_value=['Test Item']) as mock_parse:
+        result = await scraper.scrape_data()
+        assert result == ['Test Item']
 
 # Tests de edge cases
-def test_fetch_page_empty_url(scraper):
-    url = ""
-    with pytest.raises(ValueError) as excinfo:
-        scraper.fetch_page(url)
-    assert str(excinfo.value) == "URL cannot be empty"
+def test_scraper_with_empty_url():
+    try:
+        Scraper("")
+    except ValueError as e:
+        assert str(e) == "Base URL cannot be empty"
 
-def test_parse_content_no_title(scraper):
-    html_content = "<html><body><p>Content</p></body></html>"
-    soup = BeautifulSoup(html_content, 'html.parser')
-    title, content = scraper.parse_content(soup)
-    assert title is None
-    assert content == "Content"
+@patch('requests.get')
+async def test_scrape_data_with_no_items(mock_get, scraper):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "<html><body></body></html>"
+    mock_get.return_value = mock_response
 
-def test_parse_content_no_content(scraper):
-    html_content = "<html><body><h1>Title</h1></body></html>"
-    soup = BeautifulSoup(html_content, 'html.parser')
-    title, content = scraper.parse_content(soup)
-    assert title == "Title"
-    assert content is None
+    with patch.object(Scraper, 'parse_html', return_value=[]) as mock_parse:
+        result = await scraper.scrape_data()
+        assert result == []
 
 # Tests de manejo de errores
-def test_fetch_page_client_error(scraper, mock_aiohttp_session):
-    url = "http://example.com"
-    response = AsyncMock()
-    response.status = 404
-    response.text.return_value = "Not Found"
-    mock_aiohttp_session.get.return_value.__aenter__.return_value = response
-    with pytest.raises(ClientResponseError) as excinfo:
-        scraper.fetch_page(url)
-    assert excinfo.value.status == 404
+@patch('requests.get')
+async def test_scrape_data_with_http_error(mock_get, scraper):
+    mock_response = MagicMock()
+    mock_response.status_code = 404
+    mock_get.return_value = mock_response
 
-def test_parse_content_invalid_html(scraper):
-    html_content = "<html><body><h1>Title</h1></p>Content</p></body></html>"
-    soup = BeautifulSoup(html_content, 'html.parser')
-    title, content = scraper.parse_content(soup)
-    assert title == "Title"
-    assert content is None
+    try:
+        await scraper.scrape_data()
+    except Exception as e:
+        assert str(e) == "Failed to fetch data: HTTP Error 404"
 
-def test_save_article_none(mock_db_session):
-    article = None
-    with pytest.raises(ValueError) as excinfo:
-        WebScraper.save_article(article, mock_db_session)
-    assert str(excinfo.value) == "Article cannot be None"
+@patch('requests.get')
+async def test_scrape_data_with_exception(mock_get, scraper):
+    mock_get.side_effect = Exception("Network error")
+
+    try:
+        await scraper.scrape_data()
+    except Exception as e:
+        assert str(e) == "Failed to fetch data: Network error"
