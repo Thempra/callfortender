@@ -1,6 +1,16 @@
 import pytest
 from fastapi.testclient import TestClient
-from src.convocatoria import ConvocatoriaBase, ConvocatoriaCreate, ConvocatoriaUpdate, ConvocatoriaInDBBase, Convocatoria, ConvocatoriaModel, ConvocatoriaRepository, get_db, app
+from src.convocatoria import (
+    ConvocatoriaBase,
+    ConvocatoriaCreate,
+    ConvocatoriaUpdate,
+    ConvocatoriaInDBBase,
+    Convocatoria,
+    ConvocatoriaModel,
+    ConvocatoriaRepository,
+    get_db,
+    app
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from unittest.mock import AsyncMock
 from datetime import date
@@ -63,7 +73,7 @@ def test_get_convocation_by_id(convocation_repository, valid_convocation_data):
 # Tests de edge cases
 def test_create_convocation_min_length_title(convocation_repository):
     data = {
-        "titulo": "C" * 3,
+        "titulo": "C" * 5,
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 1),
         "fecha_fin": date(2023, 10, 31)
@@ -126,6 +136,26 @@ def test_create_convocation_invalid_date_range(convocation_repository):
         "descripcion": "Esta es una convocatoria de prueba.",
         "fecha_inicio": date(2023, 10, 31),
         "fecha_fin": date(2023, 10, 1)
+    }
+    with pytest.raises(ValueError):
+        ConvocatoriaCreate(**data)
+
+def test_create_convocation_invalid_length_title(convocation_repository):
+    data = {
+        "titulo": "C" * 4,
+        "descripcion": "Esta es una convocatoria de prueba.",
+        "fecha_inicio": date(2023, 10, 1),
+        "fecha_fin": date(2023, 10, 31)
+    }
+    with pytest.raises(ValueError):
+        ConvocatoriaCreate(**data)
+
+def test_create_convocation_invalid_length_title_max(convocation_repository):
+    data = {
+        "titulo": "C" * 101,
+        "descripcion": "Esta es una convocatoria de prueba.",
+        "fecha_inicio": date(2023, 10, 1),
+        "fecha_fin": date(2023, 10, 31)
     }
     with pytest.raises(ValueError):
         ConvocatoriaCreate(**data)
