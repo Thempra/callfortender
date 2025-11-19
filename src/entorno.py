@@ -1,337 +1,278 @@
-# requirements.txt
-fastapi>=0.78.0
-uvicorn[standard]>=0.17.6
-sqlalchemy>=1.4.39
-asyncpg>=0.25.0
-pydantic[email]>=1.10.2
-pytest>=7.1.2
-coverage>=6.4.1
-redis>=4.1.4
+# app/middleware.py
 
-# docker-compose.yml
-version: '3.8'
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+import time
+import logging
 
-services:
-  app:
-    build: .
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - .:/code
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
-      - redis
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-  db:
-    image: postgres:13
-    environment:
-      POSTGRES_USER: ${DATABASE_USERNAME}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-      POSTGRES_DB: ${DATABASE_NAME}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+class LoggingMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to log request and response details.
+    """
 
-  redis:
-    image: redis:6.2
-    ports:
-      - "6379:6379"
+    async def dispatch(self, request: Request, call_next) -> Response:
+        """
+        Log the request path and method before passing it to the next middleware or route handler.
+        Log the response status code after receiving it from the route handler.
 
-volumes:
-  postgres_data:
+        Args:
+            request (Request): The incoming request object.
+            call_next: The next middleware or route handler in the stack.
 
-# Dockerfile
-FROM python:3.11-slim
+        Returns:
+            Response: The outgoing response object.
+        """
+        start_time = time.time()
+        logger.info(f"Received {request.method} request for URL: {request.url.path}")
+        response = await call_next(request)
+        process_time = (time.time() - start_time) * 1000
+        logger.info(
+            f"Completed {request.method} request to {request.url.path}: "
+            f"{response.status_code} in {process_time:.2f}ms"
+        )
+        return response
 
-WORKDIR /code
+class AuthenticationMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to handle authentication for incoming requests.
+    """
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+    async def dispatch(self, request: Request, call_next) -> Response:
+        """
+        Check if the request is authenticated before passing it to the next middleware or route handler.
 
-COPY . .
+        Args:
+            request (Request): The incoming request object.
+            call_next: The next middleware or route handler in the stack.
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+        Returns:
+            Response: The outgoing response object.
+        """
+        # Example authentication check
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not self.is_valid_token(auth_header):
+            return Response(content="Unauthorized", status_code=401)
+        response = await call_next(request)
+        return response
 
-# app/main.py
-from fastapi import FastAPI, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
-from app.routers import users
+    def is_valid_token(self, token: str) -> bool:
+        """
+        Validate the provided authentication token.
+
+        Args:
+            token (str): The authentication token to validate.
+
+        Returns:
+            bool: True if the token is valid, False otherwise.
+        """
+        # Example token validation logic
+        return token == "valid-token"
+
+def add_middleware(app: FastAPI) -> None:
+    """
+    Add middleware to the FastAPI application.
+
+    Args:
+        app (FastAPI): The FastAPI application instance.
+    """
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(LoggingMiddleware)
+    app.add_middleware(AuthenticationMiddleware)
+
+# __init__.py
+
+from fastapi import FastAPI
+from .middleware import add_middleware
+from .routers import user_router  # Assuming you have a router defined in routers/user.py
 
 app = FastAPI()
 
-@app.on_event("startup")
-async def startup():
-    """
-    Startup event to initialize any necessary resources.
-    """
-    pass
+add_middleware(app)
+app.include_router(user_router, prefix="/users", tags=["users"])
 
-@app.on_event("shutdown")
-async def shutdown():
-    """
-    Shutdown event to clean up any resources.
-    """
-    pass
+# routers/user.py
 
-app.include_router(users.router, prefix="/users", tags=["users"])
-
-# app/routers/users.py
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
+from ..models.user_model import UserCreate, User
+from ..services.call_processing_service import CallProcessingService
+from ..dependencies import get_call_processing_service
+from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.schemas import UserCreate, User
-from app.crud import create_user, get_user_by_id, update_user, delete_user
-from app.dependencies import get_db
+from fastapi import Depends
 
 router = APIRouter()
 
 @router.post("/", response_model=User)
-async def create_new_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
+async def create_user(
+    user_create: UserCreate,
+    call_processing_service: CallProcessingService = Depends(get_call_processing_service),
+) -> User:
     """
     Create a new user.
 
     Args:
-        user (UserCreate): The user data to create.
-        db (AsyncSession): The database session.
+        user_create (UserCreate): The data for the new user.
+        call_processing_service (CallProcessingService): The service to handle user creation.
 
     Returns:
         User: The created user.
     """
-    db_user = await create_user(db=db, user=user)
-    return db_user
+    try:
+        return await call_processing_service.create_user(user_create)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/", response_model=List[User])
+async def get_users(
+    skip: int = 0,
+    limit: int = 10,
+    call_processing_service: CallProcessingService = Depends(get_call_processing_service),
+) -> List[User]:
+    """
+    Retrieve a list of users.
+
+    Args:
+        skip (int): The number of users to skip.
+        limit (int): The maximum number of users to return.
+        call_processing_service (CallProcessingService): The service to handle user retrieval.
+
+    Returns:
+        List[User]: A list of users.
+    """
+    try:
+        return await call_processing_service.get_users(skip, limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{user_id}", response_model=User)
-async def read_user(user_id: int, db: AsyncSession = Depends(get_db)):
+async def get_user(
+    user_id: int,
+    call_processing_service: CallProcessingService = Depends(get_call_processing_service),
+) -> User:
     """
-    Get a user by ID.
+    Retrieve a single user by ID.
 
     Args:
         user_id (int): The ID of the user to retrieve.
-        db (AsyncSession): The database session.
+        call_processing_service (CallProcessingService): The service to handle user retrieval.
 
     Returns:
         User: The retrieved user.
-
-    Raises:
-        HTTPException: If the user is not found.
     """
-    db_user = await get_user_by_id(db=db, user_id=user_id)
-    if db_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return db_user
+    try:
+        return await call_processing_service.get_user(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/{user_id}", response_model=User)
-async def update_existing_user(user_id: int, user_update: UserCreate, db: AsyncSession = Depends(get_db)):
+async def update_user(
+    user_id: int,
+    user_update: UserCreate,
+    call_processing_service: CallProcessingService = Depends(get_call_processing_service),
+) -> User:
     """
     Update an existing user.
 
     Args:
         user_id (int): The ID of the user to update.
-        user_update (UserCreate): The updated user data.
-        db (AsyncSession): The database session.
+        user_update (UserCreate): The data for updating the user.
+        call_processing_service (CallProcessingService): The service to handle user updates.
 
     Returns:
         User: The updated user.
-
-    Raises:
-        HTTPException: If the user is not found.
     """
-    db_user = await update_user(db=db, user_id=user_id, user_update=user_update)
-    if db_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return db_user
+    try:
+        return await call_processing_service.update_user(user_id, user_update)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{user_id}", response_model=User)
-async def delete_existing_user(user_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_user(
+    user_id: int,
+    call_processing_service: CallProcessingService = Depends(get_call_processing_service),
+) -> User:
     """
-    Delete an existing user.
+    Delete a user by ID.
 
     Args:
         user_id (int): The ID of the user to delete.
-        db (AsyncSession): The database session.
-
-    Returns:
-        User: The deleted user.
-
-    Raises:
-        HTTPException: If the user is not found.
-    """
-    db_user = await delete_user(db=db, user_id=user_id)
-    if db_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return db_user
-
-# app/schemas.py
-from pydantic import BaseModel, EmailStr, Field
-from datetime import date
-
-class UserBase(BaseModel):
-    """
-    Base model for user information.
-    """
-    username: str = Field(..., min_length=3, max_length=50)
-    email: EmailStr
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    date_of_birth: Optional[date] = None
-
-class UserCreate(UserBase):
-    """
-    Model for creating a new user.
-    """
-    password: str = Field(..., min_length=8)
-
-class UserUpdate(UserBase):
-    """
-    Model for updating an existing user.
-    """
-
-class UserInDBBase(UserBase):
-    """
-    Base model for user information stored in the database.
-    """
-    id: int
-
-    class Config:
-        orm_mode = True
-
-class User(UserInDBBase):
-    """
-    Model for user information returned to the client.
-    """
-
-class UserInDB(UserInDBBase):
-    """
-    Model for user information stored in the database, including hashed password.
-    """
-    hashed_password: str
-
-# app/crud.py
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.models import UserInDB, UserCreate, UserUpdate, User
-from app.repositories.user_repository import UserRepository
-
-async def create_user(db: AsyncSession, user: UserCreate) -> User:
-    """
-    Create a new user.
-
-    Args:
-        db (AsyncSession): The database session.
-        user (UserCreate): The user data to create.
-
-    Returns:
-        User: The created user.
-    """
-    user_repo = UserRepository(session=db)
-    return await user_repo.create(user=user)
-
-async def get_user_by_id(db: AsyncSession, user_id: int) -> User:
-    """
-    Get a user by ID.
-
-    Args:
-        db (AsyncSession): The database session.
-        user_id (int): The ID of the user to retrieve.
-
-    Returns:
-        User: The retrieved user.
-    """
-    user_repo = UserRepository(session=db)
-    return await user_repo.get_by_id(user_id=user_id)
-
-async def update_user(db: AsyncSession, user_id: int, user_update: UserUpdate) -> User:
-    """
-    Update an existing user.
-
-    Args:
-        db (AsyncSession): The database session.
-        user_id (int): The ID of the user to update.
-        user_update (UserUpdate): The updated user data.
-
-    Returns:
-        User: The updated user.
-    """
-    user_repo = UserRepository(session=db)
-    return await user_repo.update(user_id=user_id, user_update=user_update)
-
-async def delete_user(db: AsyncSession, user_id: int) -> User:
-    """
-    Delete an existing user.
-
-    Args:
-        db (AsyncSession): The database session.
-        user_id (int): The ID of the user to delete.
+        call_processing_service (CallProcessingService): The service to handle user deletion.
 
     Returns:
         User: The deleted user.
     """
-    user_repo = UserRepository(session=db)
-    return await user_repo.delete(user_id=user_id)
+    try:
+        return await call_processing_service.delete_user(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-# app/models.py
-from typing import Optional
-from sqlalchemy import Column, Integer, String, Date
-from sqlalchemy.ext.declarative import declarative_base
+# services/call_processing_service.py
 
-Base = declarative_base()
-
-class UserInDB(Base):
-    """
-    Model for user information stored in the database.
-    """
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, index=True)
-    email = Column(String(255), unique=True, index=True)
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    date_of_birth = Column(Date)
-    hashed_password = Column(String(255))
-
-# app/repositories/user_repository.py
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models import UserInDB, UserCreate, UserUpdate, User
-from .base_repository import BaseRepository
+from ..models.user_model import UserCreate, UserInDB, User
+from ..repositories.user_repository import UserRepository
+from typing import List
+from fastapi import Depends
+from ..dependencies import get_user_repo
 
-class UserRepository(BaseRepository):
-    def __init__(self, session: AsyncSession):
+class CallProcessingService:
+    """
+    Service to handle user operations.
+    """
+
+    def __init__(self, user_repo: UserRepository = Depends(get_user_repo)):
         """
-        Initialize the user repository.
+        Initialize the service with a user repository.
 
         Args:
-            session (AsyncSession): The database session.
+            user_repo (UserRepository): The repository for user data access.
         """
-        super().__init__(session)
+        self.user_repo = user_repo
 
-    async def create(self, user: UserCreate) -> User:
+    async def create_user(self, user_create: UserCreate) -> User:
         """
         Create a new user.
 
         Args:
-            user (UserCreate): The user data to be created.
+            user_create (UserCreate): The data for the new user.
 
         Returns:
             User: The created user.
         """
-        db_user = UserInDB(
-            username=user.username,
-            email=user.email,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            date_of_birth=user.date_of_birth,
-            hashed_password=self._hash_password(user.password)
-        )
-        self.session.add(db_user)
-        await self.session.commit()
-        await self.session.refresh(db_user)
-        return User.from_orm(db_user)
+        return await self.user_repo.create(user_create)
 
-    async def get_by_id(self, user_id: int) -> User:
+    async def get_users(self, skip: int = 0, limit: int = 10) -> List[User]:
         """
-        Get a user by ID.
+        Retrieve a list of users.
+
+        Args:
+            skip (int): The number of users to skip.
+            limit (int): The maximum number of users to return.
+
+        Returns:
+            List[User]: A list of users.
+        """
+        return await self.user_repo.get_all(skip, limit)
+
+    async def get_user(self, user_id: int) -> User:
+        """
+        Retrieve a single user by ID.
 
         Args:
             user_id (int): The ID of the user to retrieve.
@@ -339,32 +280,24 @@ class UserRepository(BaseRepository):
         Returns:
             User: The retrieved user.
         """
-        result = await self.session.get(UserInDB, user_id)
-        return User.from_orm(result) if result else None
+        return await self.user_repo.get_by_id(user_id)
 
-    async def update(self, user_id: int, user_update: UserUpdate) -> User:
+    async def update_user(self, user_id: int, user_update: UserCreate) -> User:
         """
         Update an existing user.
 
         Args:
             user_id (int): The ID of the user to update.
-            user_update (UserUpdate): The updated user data.
+            user_update (UserCreate): The data for updating the user.
 
         Returns:
             User: The updated user.
         """
-        db_user = await self.session.get(UserInDB, user_id)
-        if db_user is None:
-            return None
-        for key, value in user_update.dict(exclude_unset=True).items():
-            setattr(db_user, key, value)
-        await self.session.commit()
-        await self.session.refresh(db_user)
-        return User.from_orm(db_user)
+        return await self.user_repo.update(user_id, user_update)
 
-    async def delete(self, user_id: int) -> User:
+    async def delete_user(self, user_id: int) -> User:
         """
-        Delete an existing user.
+        Delete a user by ID.
 
         Args:
             user_id (int): The ID of the user to delete.
@@ -372,35 +305,4 @@ class UserRepository(BaseRepository):
         Returns:
             User: The deleted user.
         """
-        db_user = await self.session.get(UserInDB, user_id)
-        if db_user is None:
-            return None
-        await self.session.delete(db_user)
-        await self.session.commit()
-        return User.from_orm(db_user)
-
-    def _hash_password(self, password: str) -> str:
-        """
-        Hash a password.
-
-        Args:
-            password (str): The password to hash.
-
-        Returns:
-            str: The hashed password.
-        """
-        # Placeholder for actual hashing logic
-        return password
-
-# app/repositories/base_repository.py
-from sqlalchemy.ext.asyncio import AsyncSession
-
-class BaseRepository:
-    def __init__(self, session: AsyncSession):
-        """
-        Initialize the base repository.
-
-        Args:
-            session (AsyncSession): The database session.
-        """
-        self.session = session
+        return await self.user_repo.delete(user_id)
